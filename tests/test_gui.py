@@ -167,3 +167,69 @@ def test_learn_commit_empty_diff_guard(window):
     window._learn_diffs = []
     window._on_learn_commit()                     # 不应崩溃、不应入库
     assert window._learn_status.text() == "空闲" or "没有" in window._learn_status.text()
+
+
+# ---------------------------------------------------------------------------
+# 总览仪表板（M3.6）+ 配置档案（M3.5 GUI 侧）
+# ---------------------------------------------------------------------------
+
+def test_dashboard_lists_device_cards(window):
+    assert window._tabs.count() == 3
+    assert window._tabs.tabText(0) == "总览"
+    assert window._dash_grid.count() == 2         # 2 台设备各一张卡
+
+
+def test_goto_device_from_dashboard(window):
+    window._goto_device("291D:385D")
+    assert window._tabs.currentWidget() is window._devices_tab
+    assert window._current_key() == "291D:385D"
+
+
+def test_profile_save_load_roundtrip(window, qapp, monkeypatch, tmp_path):
+    monkeypatch.setattr(gui_mod, "DEFAULT_PROFILE_DIR", tmp_path)
+    window._goto_device("046D:C54D")              # 有 ping 功能（3 个参数）
+    for _ in range(10):
+        qapp.processEvents()
+    assert window._proto_controls, "选中设备后应生成控件"
+
+    feature, spins = window._proto_controls[0]
+    spins["mark"].setValue(77)
+    window._profile_name.setText("我的配置")
+    window._on_profile_save()
+    files = list(tmp_path.glob("046D_C54D/*.json"))
+    assert len(files) == 1
+    assert window._profile_combo.count() == 1
+
+    spins["mark"].setValue(66)                    # 改乱 → 加载档案恢复
+    window._on_profile_load()
+    assert window._proto_controls[0][1]["mark"].value() == 77
+
+
+def test_profile_apply_executes_features(window, qapp, monkeypatch, tmp_path):
+    monkeypatch.setattr(gui_mod, "DEFAULT_PROFILE_DIR", tmp_path)
+    monkeypatch.setattr(rio, "_open_device",
+                        lambda path: FakeDev(responses=[
+                            [0x10, 0xFF, 0x00, 0x10, 0x02, 0x50, 0x42]]))
+    window._goto_device("046D:C54D")
+    for _ in range(10):
+        qapp.processEvents()
+    window._profile_name.setText("apply测试")
+    window._on_profile_save()
+    assert window._profile_combo.count() == 1
+    window._on_profile_apply()
+    window._workers[-1].wait(5000)
+    for _ in range(10):
+        qapp.processEvents()
+    log = window._log.toPlainText()
+    assert "[ping]" in log
+    assert "应用完成" in log
+
+
+def test_profile_apply_without_protocol_skips(window, qapp, monkeypatch, tmp_path):
+    monkeypatch.setattr(gui_mod, "DEFAULT_PROFILE_DIR", tmp_path)
+    window._goto_device("291D:385D")              # 无 protocol 块
+    for _ in range(10):
+        qapp.processEvents()
+    # 没有控件也没有档案 → 应用直接提示
+    window._on_profile_apply()
+    assert "无协议库条目" in window._log.toPlainText() or window._profile_combo.count() == 0

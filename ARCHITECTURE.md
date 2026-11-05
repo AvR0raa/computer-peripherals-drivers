@@ -387,3 +387,26 @@ def merge_into_db(db, vid_pid, protocol_block, note=None) -> dict
   填说明 → 生成草稿入库（unverified）
 - 入库后自动 reload db + 刷新设备页（新功能按钮立即可见）
 - 关窗时自动停录
+
+---
+
+# 架构变更记录（M3+ 附加节：多设备调节软件成型）
+
+## 17. GUI 升级（任务 3.4-3.7）
+
+- 主窗口三标签页：**总览**（3.6 设备卡片栅格 + 查看跳转）| **设备** | **学习模式**
+- 控制页（3.4）：int 参数范围 >3 自动配 QSlider+QSpinBox 双向联动；
+  `self._proto_controls: [(feature, {param: QSpinBox})]` 供档案读写
+- 配置档案（3.5，core/profiles.py）：
+  ```python
+  ProfileFeature(feature_id, params) / DeviceProfile(vidpid, name, created_ts, features)
+  save_profile(profile, directory=DEFAULT_PROFILE_DIR) -> Path   # profiles/<vidpid>_<name>.json
+  load_profile(path) -> DeviceProfile    # 校验 $schema=device-profile/v1，坏档抛 ProfileError
+  list_profiles(vidpid, directory) -> list[Path]                 # mtime 倒序
+  ```
+  GUI 侧：保存（读控件）/ 加载（写回控件）/ 应用（逐功能执行：
+  command/read→execute_feature，write→safe_write 走安全路径，write 的
+  read_from 引用功能解析 read_feature）
+- 设置持久化（3.7）：QSettings("AvR0raa","peripheral-tool")——窗口几何、
+  当前标签页、选中设备，关闭时保存、启动时恢复
+- feature 级 match 生效：控制页/档案应用解析接口时 feature.match 优先于 transport.match

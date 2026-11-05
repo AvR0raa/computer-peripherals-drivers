@@ -13,11 +13,13 @@ import sys
 import threading
 import time
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -27,7 +29,9 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
+    QSlider,
     QSplitter,
     QTabWidget,
     QTableWidget,
@@ -51,8 +55,17 @@ from core.probe import (
     probe_vendor_interfaces,
     suspect_rawhid_interfaces,
 )
+from core.profiles import (
+    DEFAULT_PROFILE_DIR,
+    DeviceProfile,
+    ProfileFeature,
+    list_profiles,
+    load_profile,
+    save_profile,
+)
 from core.recorder import Recorder, RecorderTarget
 from core.report_io import ReportIO, execute_feature
+from core.safe_write import safe_write
 from core.wizard import build_drafts, build_protocol_block, merge_into_db
 
 STATUS_COLOR = {
@@ -128,10 +141,33 @@ class MainWindow(QMainWindow):
         self._devices: dict[str, list[dm.DeviceInfo]] = {}   # "VID:PID" -> 接口列表
         self._workers: list[Worker] = []                     # 防 GC
         self._watcher: HotplugWatcher | None = None
+        self._proto_controls: list[tuple[dict, dict]] = []   # (feature, {param: QSpinBox})
+        self._settings = QSettings("AvR0raa", "peripheral-tool")
 
         self._build_ui()
         self.log_line.connect(self._append_log)
+
+        # 设置持久化（任务 3.7）：窗口几何
+        geometry = self._settings.value("window/geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+
         self.refresh_devices()
+
+        # 恢复上次会话：标签页 + 选中设备
+        try:
+            tab_index = int(self._settings.value("ui/tab", 1))
+        except (TypeError, ValueError):
+            tab_index = 1
+        if 0 <= tab_index < self._tabs.count():
+            self._tabs.setCurrentIndex(tab_index)
+        last_key = self._settings.value("ui/selected_device", "")
+        if last_key:
+            for i in range(self._list.count()):
+                if self._list.item(i).data(Qt.UserRole) == last_key:
+                    self._list.setCurrentRow(i)
+                    break
+
         self._start_watcher()
 
     # ---- UI 构建 ----
@@ -205,6 +241,26 @@ class MainWindow(QMainWindow):
 
         self._protocol_box = QVBoxLayout()
         right_layout.addLayout(self._protocol_box)
+
+        # 配置档案区（任务 3.5）
+        profile_row = QHBoxLayout()
+        self._profile_name = QLineEdit()
+        self._profile_name.setPlaceholderText("档案名（保存时用）")
+        self._profile_save_btn = QPushButton("保存档案")
+        self._profile_save_btn.setToolTip("把当前所有功能控件的参数值存为该设备的配置档案")
+        self._profile_save_btn.clicked.connect(self._on_profile_save)
+        self._profile_combo = QComboBox()
+        self._profile_load_btn = QPushButton("加载到控件")
+        self._profile_load_btn.clicked.connect(self._on_profile_load)
+        self._profile_apply_btn = QPushButton("应用档案（执行全部）")
+        self._profile_apply_btn.setToolTip("按档案参数逐个执行协议功能；write 功能走安全写路径")
+        self._profile_apply_btn.clicked.connect(self._on_profile_apply)
+        profile_row.addWidget(self._profile_name, 1)
+        profile_row.addWidget(self._profile_save_btn)
+        profile_row.addWidget(self._profile_combo, 1)
+        profile_row.addWidget(self._profile_load_btn)
+        profile_row.addWidget(self._profile_apply_btn)
+        right_layout.addLayout(profile_row)
         right_layout.addStretch(1)
         top.addWidget(right)
         top.setSizes([380, 700])
@@ -220,8 +276,10 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self._log)
         layout.addWidget(splitter)
 
-        # 顶部标签页：设备页（原布局）+ 学习模式页
+        # 顶部标签页：总览（3.6）+ 设备页 + 学习模式页
+        self._devices_tab = root
         self._tabs = QTabWidget()
+        self._tabs.addTab(self._build_dashboard_tab(), "总览")
         self._tabs.addTab(root, "设备")
         self._tabs.addTab(self._build_learn_tab(), "学习模式")
         self.setCentralWidget(self._tabs)
@@ -255,6 +313,7 @@ class MainWindow(QMainWindow):
             if key == selected:
                 item.setSelected(True)
         self._refresh_learn_targets()
+        self._refresh_dashboard()
 
     def _current_key(self) -> str | None:
         items = self._list.selectedItems()
@@ -273,6 +332,9 @@ class MainWindow(QMainWindow):
         self.refresh_devices()
 
     def closeEvent(self, event):
+        self._settings.setValue("window/geometry", self.saveGeometry())
+        self._settings.setValue("ui/tab", self._tabs.currentIndex())
+        self._settings.setValue("ui/selected_device", self._current_key() or "")
         if self._watcher:
             self._watcher.stop_watching()
             self._watcher.wait(2000)
@@ -289,8 +351,10 @@ class MainWindow(QMainWindow):
         self._desc_status.setText("")
         self._clear_protocol_panel()
         if key is None:
+            self._profile_combo.clear()
             self._detail_title.setText("选择左侧设备查看详情")
             return
+        self._reload_profile_combo(key)
         ifaces = self._devices.get(key, [])
         first = ifaces[0]
         result = fingerprint(first, self.db)
@@ -320,6 +384,7 @@ class MainWindow(QMainWindow):
         self._build_protocol_panel(key, ifaces, result)
 
     def _clear_protocol_panel(self):
+        self._proto_controls = []
         while self._protocol_box.count():
             item = self._protocol_box.takeAt(0)
             widget = item.widget()
@@ -363,16 +428,79 @@ class MainWindow(QMainWindow):
             form = QFormLayout(box)
             spinboxes: dict[str, QSpinBox] = {}
             for name, spec in feature.get("params", {}).items():
+                low, high = spec.get("min", 0), spec.get("max", 255)
                 spin = QSpinBox()
-                spin.setRange(spec.get("min", 0), spec.get("max", 255))
+                spin.setRange(low, high)
                 spin.setValue(spec.get("default", 0))
-                form.addRow(spec.get("label", name), spin)
+                if high - low > 3:                       # 范围大 → 配滑条（任务 3.4）
+                    slider = QSlider(Qt.Horizontal)
+                    slider.setRange(low, high)
+                    slider.setValue(spin.value())
+                    spin.valueChanged.connect(slider.setValue)
+                    slider.valueChanged.connect(spin.setValue)
+                    form.addRow(spec.get("label", name), spin)
+                    form.addRow("", slider)
+                else:
+                    form.addRow(spec.get("label", name), spin)
                 spinboxes[name] = spin
+            self._proto_controls.append((feature, spinboxes))
             run_btn = QPushButton("执行")
             run_btn.clicked.connect(
                 lambda _, k=key, f=feature, s=dict(spinboxes): self._on_run_feature(k, f, s))
             form.addRow(run_btn)
             self._protocol_box.addWidget(box)
+
+    # ---- 总览仪表板（任务 3.6）----
+
+    def _build_dashboard_tab(self) -> QWidget:
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.addWidget(QLabel(
+            "<b>设备总览</b> — 插拔实时更新，点「查看」进入设备页控制"))
+        self._dash_host = QWidget()
+        self._dash_grid = QGridLayout(self._dash_host)
+        self._dash_grid.setSpacing(8)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self._dash_host)
+        outer.addWidget(scroll, 1)
+        return page
+
+    def _refresh_dashboard(self):
+        grid = self._dash_grid
+        while grid.count():
+            item = grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        if not self._devices:
+            grid.addWidget(QLabel("没有发现 HID 设备（插上外设或点刷新）"), 0, 0)
+            return
+        for index, (key, ifaces) in enumerate(sorted(self._devices.items())):
+            first = ifaces[0]
+            result = fingerprint(first, self.db)
+            card = QGroupBox(first.product or "(未命名)")
+            card_layout = QVBoxLayout(card)
+            status_label = QLabel(STATUS_TEXT[result.status])
+            status_label.setStyleSheet(f"color: {STATUS_COLOR[result.status].name()}; font-weight: bold;")
+            feature_count = 0
+            if result.entry and "protocol" in result.entry:
+                feature_count = len(result.entry["protocol"].get("features", []))
+            info = QLabel(f"{key}\n品牌: {result.brand_zh or result.brand or '?'} · "
+                          f"{len(ifaces)} 接口 · 协议功能 {feature_count} 个")
+            view_btn = QPushButton("查看")
+            view_btn.clicked.connect(lambda _, k=key: self._goto_device(k))
+            card_layout.addWidget(status_label)
+            card_layout.addWidget(info)
+            card_layout.addWidget(view_btn)
+            grid.addWidget(card, index // 3, index % 3)
+
+    def _goto_device(self, key: str):
+        self._tabs.setCurrentWidget(self._devices_tab)
+        for i in range(self._list.count()):
+            if self._list.item(i).data(Qt.UserRole) == key:
+                self._list.setCurrentRow(i)
+                break
 
     # ---- 学习模式页（M4.4）----
 
@@ -743,7 +871,8 @@ class MainWindow(QMainWindow):
     def _on_run_feature(self, key: str, feature: dict, spinboxes: dict):
         ifaces = self._devices.get(key, [])
         entry = fingerprint(ifaces[0], self.db).entry
-        match = entry["protocol"]["transport"]["match"]
+        proto = entry["protocol"]
+        match = feature.get("match") or proto["transport"]["match"]   # 功能级 match 优先
         target = next((
             d for d in ifaces
             if f"{d.usage_page:04X}" == match["usage_page"]
@@ -780,6 +909,114 @@ class MainWindow(QMainWindow):
         worker = Worker(job, self)
         worker.done.connect(lambda payload: self.log_line.emit(
             ("执行完成\n" + payload[1]) if payload[0] == "ok" else f"执行出错: {payload[1]}"))
+        self._workers.append(worker)
+        worker.start()
+
+    # ---- 配置档案（任务 3.5）----
+
+    def _reload_profile_combo(self, key: str):
+        self._profile_combo.clear()
+        for path in list_profiles(key, directory=DEFAULT_PROFILE_DIR):
+            self._profile_combo.addItem(path.stem, str(path))
+
+    def _on_profile_save(self):
+        key = self._current_key()
+        if key is None:
+            return
+        name = self._profile_name.text().strip() or time.strftime("profile_%Y%m%d_%H%M%S")
+        profile = DeviceProfile(
+            vidpid=key,
+            name=name,
+            features=[
+                ProfileFeature(feature["id"], {n: s.value() for n, s in spins.items()})
+                for feature, spins in self._proto_controls
+            ],
+        )
+        try:
+            path = save_profile(profile, directory=DEFAULT_PROFILE_DIR)
+        except Exception as exc:
+            self.log_line.emit(f"档案保存失败: {exc}")
+            return
+        self._profile_name.clear()
+        self._reload_profile_combo(key)
+        self._profile_combo.setCurrentText(path.stem)
+        self.log_line.emit(f"── 档案已保存: {path.name}（{key}，{len(profile.features)} 个功能）")
+
+    def _on_profile_load(self):
+        data = self._profile_combo.currentData()
+        if not data:
+            return
+        profile = load_profile(__import__("pathlib").Path(data))
+        restored = 0
+        for pf in profile.features:
+            for feature, spins in self._proto_controls:
+                if feature["id"] != pf.feature_id:
+                    continue
+                for name, value in pf.params.items():
+                    if name in spins:
+                        spins[name].setValue(int(value))
+                        restored += 1
+        self.log_line.emit(f"── 档案「{profile.name}」已加载到控件（{restored} 个参数）")
+
+    def _on_profile_apply(self):
+        key = self._current_key()
+        data = self._profile_combo.currentData()
+        if key is None or not data:
+            return
+        profile = load_profile(__import__("pathlib").Path(data))
+        ifaces = self._devices.get(key, [])
+        entry = fingerprint(ifaces[0], self.db).entry
+        if not entry or "protocol" not in entry:
+            self.log_line.emit(f"[{key}] 无协议库条目，无法应用档案")
+            return
+        proto = entry["protocol"]
+        features_by_id = {f["id"]: f for f in proto.get("features", [])}
+        timeout_ms = proto["transport"].get("response_timeout_ms", 600)
+        self.log_line.emit(f"── 应用档案「{profile.name}」到 {key}（{len(profile.features)} 个功能）")
+
+        def job():
+            lines = []
+            for pf in profile.features:
+                feature = features_by_id.get(pf.feature_id)
+                if feature is None:
+                    lines.append(f"[{pf.feature_id}] 协议库中已不存在，跳过")
+                    continue
+                match = feature.get("match") or proto["transport"]["match"]
+                target = next((d for d in ifaces
+                               if f"{d.usage_page:04X}" == match["usage_page"]
+                               and f"{d.usage:04X}" == match["usage"]), None)
+                if target is None:
+                    lines.append(f"[{feature['id']}] 接口 UP:{match['usage_page']} 未枚举到，跳过")
+                    continue
+                io = ReportIO(target.path)
+                io.on_history = lambda e: self.log_line.emit(
+                    f"{'TX>' if e.direction == 'tx' else 'RX<'} {e.data.hex(' ')}")
+                try:
+                    with io:
+                        if feature.get("kind") == "write":
+                            read_feature = features_by_id.get(feature.get("read_from"))
+                            outcome = safe_write(io, feature, read_feature=read_feature,
+                                                 new_params=dict(pf.params), timeout_ms=timeout_ms)
+                            lines.append(f"[{feature['id']}] write "
+                                         f"{'✅' if outcome.ok else '❌'} "
+                                         f"verified={outcome.verified} rolled_back={outcome.rolled_back}")
+                        else:
+                            result = execute_feature(io, feature, dict(pf.params),
+                                                     timeout_ms=timeout_ms)
+                            if result.response is None:
+                                lines.append(f"[{feature['id']}] 无响应（超时）")
+                            elif result.ok:
+                                lines.append(f"[{feature['id']}] ✅ 主应答")
+                            else:
+                                branch_text = result.branch or "未匹配"
+                                lines.append(f"[{feature['id']}] ℹ {branch_text}")
+                finally:
+                    io.on_history = None
+            return "\n".join(lines) or "没有可应用的功能"
+
+        worker = Worker(job, self)
+        worker.done.connect(lambda payload: self.log_line.emit(
+            ("应用完成\n" + payload[1]) if payload[0] == "ok" else f"应用出错: {payload[1]}"))
         self._workers.append(worker)
         worker.start()
 
