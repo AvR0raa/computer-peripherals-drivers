@@ -3,3 +3,4 @@
 # 会遮蔽 hid 模块导致 "Unable to load ... hidapi.dll"）。
 hidapi>=0.14
 pytest>=8
+PySide6>=6.6          # M3 GUI
