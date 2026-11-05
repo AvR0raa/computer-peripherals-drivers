@@ -19,6 +19,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import core.device_manager as dm
+from core.battery import scan_all
 from core.descriptor import parse_report_descriptor, summary
 from core.fingerprint import (
     DEFAULT_DB_PATH,
@@ -167,6 +168,33 @@ def cmd_watch(args) -> int:
     return 0
 
 
+def cmd_battery(args) -> int:
+    """全部设备电量扫描（M2.5a）。"""
+    devices = dm.list_devices()
+    grouped: dict[str, list] = {}
+    for d in devices:
+        grouped.setdefault(f"{d.vid_hex}:{d.pid_hex}", []).append(d)
+
+    def read_descriptor(path: str) -> bytes | None:
+        try:
+            dev = hid.device()
+            dev.open_path(path.encode("utf-8") if isinstance(path, str) else path)
+            try:
+                return bytes(dev.get_report_descriptor())
+            finally:
+                dev.close()
+        except Exception:
+            return None
+
+    results = scan_all(grouped, read_descriptor)
+    print(f"{'VID:PID':<10} {'设备':<26} {'电量':<9} 来源/说明")
+    print("-" * 84)
+    for r in results:
+        print(f"{r.vidpid:<10} {r.product[:26]:<26} {r.display:<9} {r.detail}")
+    print("-" * 84)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cli.py", description="M1 设备识别器：枚举/识别/监视 HID 外设（只读）"
@@ -182,13 +210,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_watch = sub.add_parser("watch", help="热插拔监视")
     p_watch.add_argument("--interval", type=float, default=1.0, help="轮询秒数")
+
+    sub.add_parser("battery", help="全部设备电量扫描")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        return {"list": cmd_list, "info": cmd_info, "watch": cmd_watch}[args.command](args)
+        return {"list": cmd_list, "info": cmd_info, "watch": cmd_watch,
+                "battery": cmd_battery}[args.command](args)
     except dm.HIDError as exc:
         print(f"HID 错误: {exc}", file=sys.stderr)
         return 1

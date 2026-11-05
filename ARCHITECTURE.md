@@ -410,3 +410,40 @@ def merge_into_db(db, vid_pid, protocol_block, note=None) -> dict
 - 设置持久化（3.7）：QSettings("AvR0raa","peripheral-tool")——窗口几何、
   当前标签页、选中设备，关闭时保存、启动时恢复
 - feature 级 match 生效：控制页/档案应用解析接口时 feature.match 优先于 transport.match
+
+---
+
+# 架构变更记录（M2.5a 附加节：全设备电量）
+
+## 18. core/hidpp.py — HID++ 2.0 最小客户端
+
+```python
+SW_ID = 5;  FEATURE_ROOT=0x0000;  FEATURE_BATTERY_STATUS=0x1000;
+FEATURE_BATTERY_VOLTAGE=0x1001;  FEATURE_UNIFIED_BATTERY=0x1004
+
+def _call_feature(io, dev, feature_index, funct, params, timeout_ms) -> bytes | None
+    # 线材: [0x10, dev, featIdx, (funct<<4)|SW_ID, p0-p2]；应答 payload = resp[4:7]
+    # 0x8F 错误应答/超时 → None（call_multi 双分支路由）
+def get_feature_index(io, dev, feature_id) -> int | None    # Root.GetFeature
+def ping(io, dev, mark) -> ("2.0", ver) | ("1.0", 1.0) | ("empty-slot", None) | ("offline", None)
+def read_battery(io, dev=0xFF) -> HidppBattery | None
+    # 回退链: Unified(0x1004 funct1) → Status(0x1000 funct0) → Voltage(0x1001)
+```
+
+来源标注：Solaar lib/logitech_receiver/base.py + hidpp20_constants.py（FEATURE_SET 等
+常量逐一核对）。
+
+## 19. core/battery.py — 全设备电量编排
+
+```python
+BATTERY_USAGE_PAGE = 0x85            # HID Battery System
+def find_battery_fields(descriptor) -> list[ReportField]
+def read_standard_battery(io, fields) -> (raw | None, detail)   # feature 直读 / input 200ms 推送
+def scan_all(grouped, read_descriptor, hidpp_vids={"046D"}) -> list[BatteryResult]
+    # 顺序: 罗技→HID++(接收器槽位1-7 + 直连0xFF) → 标准电量页 → 无源标记(学习模式提示)
+BatteryResult: vidpid/product/percent/voltage_mv/source/display
+```
+
+依赖：battery → hidpp + descriptor + report_io。GUI 总览「读取全部电量」+ 卡片
+电量行（`_battery_cache`）；CLI `python cli.py battery`。
+已知边界：写触发型电量（部分国产设备）读不到 → 标记"需学习模式"，协议入库后自动接上。

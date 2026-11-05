@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 import core.device_manager as dm
+from core.battery import BatteryResult, scan_all
 from core.descriptor import parse_report_descriptor, summary
 from core.diffing import diff_sessions, format_diff
 from core.fingerprint import (
@@ -143,6 +144,7 @@ class MainWindow(QMainWindow):
         self._watcher: HotplugWatcher | None = None
         self._proto_controls: list[tuple[dict, dict]] = []   # (feature, {param: QSpinBox})
         self._settings = QSettings("AvR0raa", "peripheral-tool")
+        self._battery_cache: dict[str, BatteryResult] = {}   # vidpid -> 电量结果
 
         self._build_ui()
         self.log_line.connect(self._append_log)
@@ -455,8 +457,15 @@ class MainWindow(QMainWindow):
     def _build_dashboard_tab(self) -> QWidget:
         page = QWidget()
         outer = QVBoxLayout(page)
-        outer.addWidget(QLabel(
+        head = QHBoxLayout()
+        head.addWidget(QLabel(
             "<b>设备总览</b> — 插拔实时更新，点「查看」进入设备页控制"))
+        head.addStretch(1)
+        battery_btn = QPushButton("读取全部电量")
+        battery_btn.setToolTip("罗技走 HID++ 电量，其余扫标准 HID Battery 页(0x85)；零写入")
+        battery_btn.clicked.connect(self._on_battery_all)
+        head.addWidget(battery_btn)
+        outer.addLayout(head)
         self._dash_host = QWidget()
         self._dash_grid = QGridLayout(self._dash_host)
         self._dash_grid.setSpacing(8)
@@ -488,6 +497,12 @@ class MainWindow(QMainWindow):
                 feature_count = len(result.entry["protocol"].get("features", []))
             info = QLabel(f"{key}\n品牌: {result.brand_zh or result.brand or '?'} · "
                           f"{len(ifaces)} 接口 · 协议功能 {feature_count} 个")
+            battery_text = ""
+            cached = self._battery_cache.get(key)
+            if cached is not None:
+                battery_text = f"\n电量: {cached.display}"
+            info = QLabel(f"{key}\n品牌: {result.brand_zh or result.brand or '?'} · "
+                          f"{len(ifaces)} 接口 · 协议功能 {feature_count} 个{battery_text}")
             view_btn = QPushButton("查看")
             view_btn.clicked.connect(lambda _, k=key: self._goto_device(k))
             card_layout.addWidget(status_label)
@@ -501,6 +516,43 @@ class MainWindow(QMainWindow):
             if self._list.item(i).data(Qt.UserRole) == key:
                 self._list.setCurrentRow(i)
                 break
+
+    def _on_battery_all(self):
+        """全部设备电量扫描（后台线程，零写入路径）。"""
+        grouped = dict(self._devices)
+        self.log_line.emit(f"── 电量扫描开始（{len(grouped)} 台设备）──")
+
+        def read_descriptor(path):
+            import hid
+            try:
+                dev = hid.device()
+                dev.open_path(path.encode("utf-8") if isinstance(path, str) else path)
+                try:
+                    return bytes(dev.get_report_descriptor())
+                finally:
+                    dev.close()
+            except Exception:
+                return None
+
+        def job():
+            return scan_all(grouped, read_descriptor)
+
+        worker = Worker(job, self)
+
+        def on_done(payload):
+            status, value = payload
+            if status != "ok":
+                self.log_line.emit(f"电量扫描出错: {value}")
+                return
+            self._battery_cache = {r.vidpid: r for r in value}
+            for r in value:
+                self.log_line.emit(f"[{r.vidpid}] {r.product}: 电量 {r.display} — {r.detail}")
+            self.log_line.emit("── 电量扫描完成 ──")
+            self._refresh_dashboard()
+
+        worker.done.connect(on_done)
+        self._workers.append(worker)
+        worker.start()
 
     # ---- 学习模式页（M4.4）----
 
