@@ -1,0 +1,36 @@
+{
+  "$schema": "protocol-db/v1",
+  "_comment": "M1 协议库：brands 为 VID 级品牌表（USB VID 均为公开注册值）；devices 为精确 VID:PID 条目，M1 只录 hidapi 实测观察到的设备，M2 开始扩展报文协议。不确定的信息宁可不录。",
+
+  "brands": {
+    "046D": { "name": "Logitech", "name_zh": "罗技", "sdk": ["GHSDK", "LGS"] },
+    "1532": { "name": "Razer", "name_zh": "雷蛇", "sdk": ["ChromaSDK"] },
+    "1038": { "name": "SteelSeries", "name_zh": "赛睿", "sdk": ["SteelSeriesGG-SDK"] },
+    "1B1C": { "name": "Corsair", "name_zh": "海盗船", "sdk": ["iCUESDK"] },
+    "0B05": { "name": "ASUS", "name_zh": "华硕/ROG", "sdk": ["AuraSDK"] },
+    "046A": { "name": "CHERRY", "name_zh": "樱桃" },
+    "25A7": { "name": "Dareu", "name_zh": "达尔优" },
+    "291D": { "name": "MCHOSE", "name_zh": "迈从" },
+    "09DA": { "name": "A4Tech", "name_zh": "双飞燕" },
+    "045E": { "name": "Microsoft", "name_zh": "微软" },
+    "05AC": { "name": "Apple", "name_zh": "苹果" },
+    "3434": { "name": "Keychron", "name_zh": "Keychron" }
+  },
+
+  "devices": {
+    "046D:C54D": {
+      "brand": "Logitech",
+      "product": "USB Receiver",
+      "note": "Unifying 兼容接收器，可接多台罗技外设",
+      "source": "hidapi-observed",
+      "verified": false
+    },
+    "291D:385D": {
+      "brand": "MCHOSE",
+      "product": "MCHOSE V9 PRO",
+      "note": "游戏鼠标；接口0 复用 6 个 usage page，vendor 页 0xFF21/0xFF22/0xFF90/0xFF82，feature report id=237(0xED) 15字节，疑似配置通道",
+      "source": "hidapi-observed",
+      "verified": false
+    }
+  }
+}
