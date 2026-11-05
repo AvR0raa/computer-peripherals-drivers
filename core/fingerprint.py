@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -17,6 +18,105 @@ DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "protocol_db" / "db.j
 
 class ProtocolDBError(RuntimeError):
     """协议库文件缺失或结构不合法。"""
+
+
+_PLACEHOLDER_RE = re.compile(r"^\{[A-Za-z_]\w*\}$")
+_VALID_KINDS = {"command", "read", "write"}
+_VALID_REPORTS = {"output", "feature"}
+
+
+def _is_byte(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 255
+
+
+def _validate_protocol(vid_pid: str, protocol) -> None:
+    """校验 schema v2 的 protocol 块，非法抛 ProtocolDBError。"""
+    where = f"devices[{vid_pid}].protocol"
+    if not isinstance(protocol, dict):
+        raise ProtocolDBError(f"{where}: 必须是 object")
+    for key in ("name", "transport", "features"):
+        if key not in protocol:
+            raise ProtocolDBError(f"{where}: 缺少 {key}")
+    if not isinstance(protocol["name"], str):
+        raise ProtocolDBError(f"{where}.name: 必须是字符串")
+    features = protocol["features"]
+    if not isinstance(features, list) or not features:
+        raise ProtocolDBError(f"{where}.features: 必须是非空数组")
+
+    transport = protocol["transport"]
+    if not isinstance(transport, dict):
+        raise ProtocolDBError(f"{where}.transport: 必须是 object")
+    match = transport.get("match")
+    if not isinstance(match, dict):
+        raise ProtocolDBError(f"{where}.transport.match: 必须是 object")
+    for key in ("usage_page", "usage"):
+        value = match.get(key, "")
+        if not (isinstance(value, str) and re.fullmatch(r"[0-9A-Fa-f]{4}", value)):
+            raise ProtocolDBError(f"{where}.transport.match.{key}: 须为 4 位十六进制字符串")
+
+    for index, feature in enumerate(features):
+        fwhere = f"{where}.features[{index}]({feature.get('id', '?') if isinstance(feature, dict) else '?'})"
+        if not isinstance(feature, dict):
+            raise ProtocolDBError(f"{fwhere}: 必须是 object")
+        for key in ("id", "label", "kind", "report", "template"):
+            if key not in feature:
+                raise ProtocolDBError(f"{fwhere}: 缺少 {key}")
+        if feature["kind"] not in _VALID_KINDS:
+            raise ProtocolDBError(f"{fwhere}.kind: 必须是 {_VALID_KINDS} 之一")
+        if feature["report"] not in _VALID_REPORTS:
+            raise ProtocolDBError(f"{fwhere}.report: 必须是 {_VALID_REPORTS} 之一")
+        template = feature["template"]
+        if not isinstance(template, list):
+            raise ProtocolDBError(f"{fwhere}.template: 必须是数组")
+        for element in template:
+            if not (_is_byte(element) or (isinstance(element, str) and _PLACEHOLDER_RE.match(element))):
+                raise ProtocolDBError(
+                    f"{fwhere}.template: 元素须为 0-255 整数或 {{参数}} 占位符，收到 {element!r}")
+        if feature["kind"] == "write" and not feature.get("read_from"):
+            raise ProtocolDBError(f"{fwhere}: kind=write 必须提供 read_from（读回验证用）")
+        _validate_params(fwhere, feature.get("params"))
+        if "response" in feature:
+            _validate_response(fwhere, feature["response"])
+
+
+def _validate_params(where: str, params) -> None:
+    if params is None:
+        return
+    if not isinstance(params, dict):
+        raise ProtocolDBError(f"{where}.params: 必须是 object")
+    for name, spec in params.items():
+        if not isinstance(spec, dict) or spec.get("type") != "int":
+            raise ProtocolDBError(f"{where}.params.{name}: 仅支持 {{'type': 'int', ...}}")
+        for key in ("default", "min", "max"):
+            if key in spec and not isinstance(spec[key], int):
+                raise ProtocolDBError(f"{where}.params.{name}.{key}: 必须是整数")
+        if {"min", "max"} <= spec.keys() and spec["min"] > spec["max"]:
+            raise ProtocolDBError(f"{where}.params.{name}: min > max")
+
+
+def _validate_response(where: str, response) -> None:
+    if not isinstance(response, dict):
+        raise ProtocolDBError(f"{where}.response: 必须是 object")
+    branches = [("response", response)]
+    if "alt" in response:
+        branches.append(("response.alt", response["alt"]))
+    for path, branch in branches:
+        if not isinstance(branch, dict):
+            raise ProtocolDBError(f"{where}.{path}: 必须是 object")
+        if "check" not in branch:
+            raise ProtocolDBError(f"{where}.{path}: 缺少 check")
+        for element in branch["check"]:
+            ok = (
+                element is None
+                or _is_byte(element)
+                or (isinstance(element, str) and _PLACEHOLDER_RE.match(element))
+                or (isinstance(element, list) and all(_is_byte(v) for v in element))
+            )
+            if not ok:
+                raise ProtocolDBError(f"{where}.{path}.check: 非法元素 {element!r}")
+        for key, index in branch.get("extract", {}).items():
+            if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+                raise ProtocolDBError(f"{where}.{path}.extract.{key}: 必须是非负整数索引")
 
 
 class DeviceStatus(str, Enum):
@@ -54,6 +154,9 @@ def load_db(path: Path = DEFAULT_DB_PATH) -> dict:
         bad = [k for k in db["devices"] if ":" not in k]
         if bad:
             raise ProtocolDBError(f"devices 键必须是 VID:PID 格式: {bad[:3]}")
+        for vid_pid, entry in db["devices"].items():
+            if isinstance(entry, dict) and "protocol" in entry:
+                _validate_protocol(vid_pid, entry["protocol"])
     return db
 
 

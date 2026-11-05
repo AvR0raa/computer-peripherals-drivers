@@ -181,3 +181,90 @@ python cli.py watch [--interval 1.0]   # 热插拔监视（Ctrl+C 退出）
 | 1.2 | 显示"接口1=键盘，接口2=厂商自定义" | info --desc 输出 application usage + vendor page 标记 |
 | 1.3 | 输出 已知(直通)/有官方SDK/未知(可学习) | list 命令状态列 |
 | 1.4 | 单文件 exe | 独立任务，M1 验收后进行 |
+
+---
+
+# 架构变更记录（M2 / M3 附加节）
+
+> 以下为 M2（协议库+直通引擎）与 M3（GUI）的附加契约，M1 的 1-5 节继续有效。
+
+## 6. M2 附加架构
+
+### core/report_io.py — 模板渲染 + report 读写器
+
+```python
+def render_template(template: list, params: dict) -> bytes
+    # 纯函数。元素: int(0-255) 或 "{param}"；未知占位符/越界抛 RenderError
+
+def match_response(response: bytes, check: list, params: dict) -> bool
+    # 纯函数。check 元素: int 精确 | None 通配 | "{param}" 引用 | [v1,v2..] 任一；
+    # 长度不足 response 直接 False
+
+@dataclass
+class HistoryEntry:
+    ts: float; direction: str  # "tx" | "rx" | "err"
+    data: bytes                # UI 层负责转 hex
+
+class ReportIO:
+    def __init__(self, path: bytes | str)   # 惰性打开
+    def open() -> None                      # 失败抛 ReportError
+    def close() -> None
+    def write_output(data: bytes) -> int
+    def read_input(timeout_ms: int) -> bytes | None
+    def call(data: bytes, check: list | None, params: dict,
+             timeout_ms: int = 500) -> bytes | None
+        # 写 output + 循环读 input 直到匹配 check 或超时
+    def send_feature(data: bytes) -> None
+    def get_feature(report_id: int, size: int) -> bytes | None
+    history: list[HistoryEntry]             # 每次收发追加
+    on_history: Callable | None = None      # 实时订阅（GUI 用）
+
+class ReportError(RuntimeError); class RenderError(ValueError)
+```
+
+### db.json schema v2 —— devices.* 可选 protocol 块
+
+```jsonc
+"protocol": {
+  "name": "hidpp",
+  "transport": { "match": {"usage_page": "FF00", "usage": "0001"},
+                  "short_len": 7, "long_len": 20, "response_timeout_ms": 500 },
+  "features": [{
+    "id": "ping", "label": "Ping",
+    "kind": "command",              // command=写并等响应 | read=只读 | write=写(必须带 read_from)
+    "report": "output",             // output | feature
+    "template": [16, "{device_index}", 0, "{request_id}", 0, 0, "{mark}"],
+    "params": { "device_index": {"type":"int","default":255,"min":0,"max":255,"label":"设备索引"} },
+    "response": { "min_len": 7,
+                  "check":  [16, "{device_index}", [0,143], "{request_id}", null, null, "{mark}"],
+                  "extract": {"major": 4, "minor": 5} }   // 索引 → 结果键名
+  }]
+}
+```
+
+- load_db 校验 v1/v2：v2 protocol 块结构非法抛 ProtocolDBError
+- kind=write 必须含 read_from（指向同协议 read 功能 id），M2.4 起强制
+
+### core/safe_write.py — 写安全机制（M2.4）
+
+```python
+@dataclass
+class WriteOutcome:
+    ok: bool; wrote: bytes | None; readback: bytes | None
+    rolled_back: bool; log: list[str]        # 每步一行，含完整 hex
+
+def safe_write(io, write_feature: dict, read_feature: dict | None,
+               new_params: dict, timeout_ms=500) -> WriteOutcome
+    # 序列: (有 read 时)读旧值 → 写新值 → 读回比对 → 不匹配回滚旧值再读回
+    # 全程写 log（完整 hex），io.history 同步记录
+```
+
+## 7. M3 附加架构（gui.py，单文件 PySide6 应用）
+
+- MainWindow：左设备列表（QListWidget，状态着色 KNOWN=绿/SDK=蓝/UNKNOWN=灰）
+  + 右详情页（设备信息 / 描述符摘要 / 按 db.protocol.features 动态生成的操作区）
+  + 底部 hex 日志（QPlainTextEdit，等宽字体，随 on_history 实时追加）
+- HotplugWatcher(QThread)：复用 diff_snapshots 轮询 → Qt 信号刷新列表（任务1.1 GUI 版）
+- 控件映射：params int+min/max → QSpinBox；其余占位文本；command 功能 → "执行"按钮
+- 全部设备 I/O 在工作线程（QThread + 信号回传），UI 不阻塞；M1 只读原则不变
+- 入口：`python gui.py`

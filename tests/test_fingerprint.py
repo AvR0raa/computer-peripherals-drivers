@@ -1,4 +1,6 @@
-"""任务 1.3 单元测试：core/fingerprint.py + 真实 db.json 完整性。"""
+"""任务 1.3 + M2.1 单元测试：core/fingerprint.py + 真实 db.json 完整性。"""
+import json
+
 import pytest
 
 from core.device_manager import DeviceInfo
@@ -90,6 +92,78 @@ def test_load_db_rejects_bad_device_key(tmp_path):
     )
     with pytest.raises(ProtocolDBError):
         load_db(bad)
+
+
+# ---------------------------------------------------------------------------
+# schema v2 protocol 块校验
+# ---------------------------------------------------------------------------
+
+VALID_PROTOCOL = {
+    "name": "hidpp",
+    "transport": {"match": {"usage_page": "FF00", "usage": "0001"}, "short_len": 7},
+    "features": [{
+        "id": "ping", "label": "Ping", "kind": "command", "report": "output",
+        "template": [16, "{device_index}", 0, "{request_id}", 0, 0, "{mark}"],
+        "params": {"device_index": {"type": "int", "default": 255, "min": 0, "max": 255}},
+        "response": {"min_len": 7,
+                     "check": [16, "{device_index}", 0, "{request_id}", None, None, "{mark}"],
+                     "extract": {"major": 4, "minor": 5}},
+    }],
+}
+
+
+def _write_db(tmp_path, devices):
+    path = tmp_path / "db.json"
+    path.write_text(json.dumps({
+        "$schema": "protocol-db/v2", "brands": {}, "devices": devices,
+    }), encoding="utf-8")
+    return path
+
+
+def test_v2_valid_protocol_loads(tmp_path):
+    db = load_db(_write_db(tmp_path, {"046D:C54D": {"brand": "Logitech",
+                                                    "protocol": VALID_PROTOCOL}}))
+    assert db["devices"]["046D:C54D"]["protocol"]["name"] == "hidpp"
+
+
+@pytest.mark.parametrize("mutate, fragment", [
+    (lambda f: f.update(template=[999]), "template"),
+    (lambda f: f.update(template=["{1bad}"]), "template"),
+    (lambda f: f.update(kind="write"), "read_from"),
+    (lambda f: f.update(report="input"), "report"),
+    (lambda f: f["params"].update(x={"type": "string"}), "params"),
+])
+def test_v2_invalid_features_rejected(tmp_path, mutate, fragment):
+    import copy
+    protocol = copy.deepcopy(VALID_PROTOCOL)
+    mutate(protocol["features"][0])
+    path = _write_db(tmp_path, {"046D:C54D": {"protocol": protocol}})
+    with pytest.raises(ProtocolDBError, match=fragment):
+        load_db(path)
+
+
+def test_v2_bad_transport_rejected(tmp_path):
+    import copy
+    protocol = copy.deepcopy(VALID_PROTOCOL)
+    protocol["transport"]["match"]["usage_page"] = "XYZ"
+    path = _write_db(tmp_path, {"046D:C54D": {"protocol": protocol}})
+    with pytest.raises(ProtocolDBError, match="usage_page"):
+        load_db(path)
+
+
+def test_v2_bad_response_check_rejected(tmp_path):
+    import copy
+    protocol = copy.deepcopy(VALID_PROTOCOL)
+    protocol["features"][0]["response"]["check"][4] = "nope"
+    path = _write_db(tmp_path, {"046D:C54D": {"protocol": protocol}})
+    with pytest.raises(ProtocolDBError, match="check"):
+        load_db(path)
+
+
+def test_real_db_v2_loads():
+    db = load_db(DEFAULT_DB_PATH)
+    protocol = db["devices"]["046D:C54D"]["protocol"]
+    assert protocol["features"][0]["id"] == "ping"
 
 
 # ---------------------------------------------------------------------------

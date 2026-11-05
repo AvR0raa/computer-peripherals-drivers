@@ -1,6 +1,6 @@
 {
-  "$schema": "protocol-db/v1",
-  "_comment": "M1 协议库：brands 为 VID 级品牌表（USB VID 均为公开注册值）；devices 为精确 VID:PID 条目，M1 只录 hidapi 实测观察到的设备，M2 开始扩展报文协议。不确定的信息宁可不录。",
+  "$schema": "protocol-db/v2",
+  "_comment": "M2 协议库：brands 为 VID 级品牌表（USB VID 均为公开注册值）；devices 为精确 VID:PID 条目。protocol 块描述报文模板（占位符 {param} 由 params 定义），来源标注在 source。不确定的信息宁可不录。",
 
   "brands": {
     "046D": { "name": "Logitech", "name_zh": "罗技", "sdk": ["GHSDK", "LGS"] },
@@ -21,9 +21,42 @@
     "046D:C54D": {
       "brand": "Logitech",
       "product": "USB Receiver",
-      "note": "Unifying 兼容接收器，可接多台罗技外设",
-      "source": "hidapi-observed",
-      "verified": false
+      "note": "Unifying 兼容接收器。FF00:0001=HID++短报文接口，FF00:0002=HID++长报文接口",
+      "source": "hidapi-observed + Solaar(lib/logitech_receiver/base.py) ping 布局",
+      "verified": false,
+      "protocol": {
+        "name": "hidpp",
+        "transport": {
+          "match": { "usage_page": "FF00", "usage": "0001" },
+          "short_len": 7,
+          "long_len": 20,
+          "response_timeout_ms": 600
+        },
+        "features": [
+          {
+            "id": "ping",
+            "label": "HID++ Ping（探测设备在线 + 协议版本，只读安全）",
+            "kind": "command",
+            "report": "output",
+            "template": [16, "{device_index}", 0, "{request_id}", 0, 0, "{mark}"],
+            "params": {
+              "device_index": { "type": "int", "default": 255, "min": 0, "max": 255, "label": "设备索引（0xFF=接收器自身）" },
+              "request_id": { "type": "int", "default": 16, "min": 16, "max": 23, "label": "请求 ID（0x10-0x17）" },
+              "mark": { "type": "int", "default": 66, "min": 0, "max": 255, "label": "随机标记字节（响应需一致）" }
+            },
+            "response": {
+              "min_len": 7,
+              "check": [16, "{device_index}", 0, "{request_id}", null, null, "{mark}"],
+              "extract": { "major": 4, "minor": 5 },
+              "alt": {
+                "label": "HID++ 1.0 设备（返回错误响应）",
+                "check": [16, "{device_index}", 143, null, null, null, null],
+                "extract": { "error_code": 4 }
+              }
+            }
+          }
+        ]
+      }
     },
     "291D:385D": {
       "brand": "MCHOSE",
