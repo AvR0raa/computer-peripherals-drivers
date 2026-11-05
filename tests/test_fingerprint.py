@@ -1,5 +1,6 @@
 """任务 1.3 + M2.1 单元测试：core/fingerprint.py + 真实 db.json 完整性。"""
 import json
+import re
 
 import pytest
 
@@ -160,6 +161,44 @@ def test_v2_bad_response_check_rejected(tmp_path):
     path = _write_db(tmp_path, {"046D:C54D": {"protocol": protocol}})
     with pytest.raises(ProtocolDBError, match="check"):
         load_db(path)
+
+
+# ---------------------------------------------------------------------------
+# 数据集完整性（M5b 扩容纪律：只录有据条目）
+# ---------------------------------------------------------------------------
+
+def test_real_db_completeness():
+    db = load_db(DEFAULT_DB_PATH)
+    assert len(db["brands"]) >= 20, "品牌表应有 20+ 条"
+    assert len(db["devices"]) >= 40, "设备表应有 40+ 条"
+    for vid, brand in db["brands"].items():
+        assert re.fullmatch(r"[0-9A-F]{4}", vid), f"品牌 VID 须大写4位hex: {vid}"
+        assert brand.get("name"), f"品牌缺 name: {vid}"
+    for key, entry in db["devices"].items():
+        assert re.fullmatch(r"[0-9A-F]{4}:[0-9A-F]{4}", key), f"设备键格式: {key}"
+        assert entry.get("brand") and entry.get("product"), f"设备缺 brand/product: {key}"
+        assert entry.get("source"), f"设备缺 source（纪律：只录有据条目）: {key}"
+        assert "type" in entry, f"设备缺 type(鼠标/键盘/耳机/接收器): {key}"
+
+
+def test_real_db_new_brands_resolve():
+    db = load_db(DEFAULT_DB_PATH)
+    # 雷蛇 DeathAdder V2 → 精确条目命中（KNOWN 优先于品牌 SDK 路线）
+    result = fingerprint(device(0x1532, 0x0084), db)
+    assert result.status is DeviceStatus.KNOWN
+    assert result.brand_zh == "雷蛇"
+    assert result.entry["product"] == "DeathAdder V2"
+    assert "ChromaSDK" in result.sdk             # 品牌级 SDK 信息仍在
+
+    # HyperX 金士顿线 → 精确条目命中（品牌无 SDK）
+    result = fingerprint(device(0x0951, 0x16A4), db)
+    assert result.status is DeviceStatus.KNOWN
+    assert result.brand == "HyperX"
+    assert result.sdk == ()
+
+    # Redragon（Microdia 线）→ 品牌识别
+    result = fingerprint(device(0x0C45, 0xFC30), db)
+    assert result.brand_zh == "红龙"
 
 
 def test_real_db_v2_loads():
