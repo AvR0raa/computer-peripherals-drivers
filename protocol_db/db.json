@@ -21,9 +21,9 @@
     "046D:C54D": {
       "brand": "Logitech",
       "product": "USB Receiver",
-      "note": "Unifying 兼容接收器。FF00:0001=HID++短报文接口，FF00:0002=HID++长报文接口",
+      "note": "Unifying 兼容接收器。FF00:0001=HID++短报文收发（ping 已真机验证），FF00:0002=长报文输入通道（实测只进不出）",
       "source": "hidapi-observed + Solaar(lib/logitech_receiver/base.py) ping 布局",
-      "verified": false,
+      "verified": true,
       "protocol": {
         "name": "hidpp",
         "transport": {
@@ -49,9 +49,9 @@
               "check": [16, "{device_index}", 0, "{request_id}", null, null, "{mark}"],
               "extract": { "major": 4, "minor": 5 },
               "alt": {
-                "label": "HID++ 1.0 设备（返回错误响应）",
+                "label": "HID++ 错误应答（0x8F：1.0 设备或无设备在线）",
                 "check": [16, "{device_index}", 143, null, null, null, null],
-                "extract": { "error_code": 4 }
+                "extract": { "error_code": 5 }
               }
             }
           }

@@ -182,6 +182,21 @@ class ReportIO:
         返回第一个匹配的响应；check=None 时返回第一个收到的响应；
         超时返回 None。设备主动推送的其他报文（如鼠标移动）被忽略并留在日志里。
         """
+        result = self.call_multi(data, [("primary", check)], params, timeout_ms)
+        return result[0] if result else None
+
+    def call_multi(
+        self,
+        data: bytes,
+        checks: list,
+        params: dict | None = None,
+        timeout_ms: int = 500,
+    ) -> tuple[bytes, str] | None:
+        """同 call()，但接受多组 (label, check) 分支，返回 (响应, 命中分支)。
+
+        用于"正常应答 + 已知错误应答"两种合法响应并存的功能
+        （例如 HID++ ping 的 2.0 应答与 1.0 错误应答）。
+        """
         params = params or {}
         self.write_output(data)
         deadline = time.monotonic() + timeout_ms / 1000
@@ -190,8 +205,61 @@ class ReportIO:
             if remaining_ms <= 0:
                 return None
             response = self.read_input(timeout_ms=min(remaining_ms, 50))
-            if response is not None and (check is None or match_response(response, check, params)):
-                return response
+            if response is not None:
+                for label, check in checks:
+                    if check is None or match_response(response, check, params):
+                        return response, label
+
+
+# ---------------------------------------------------------------------------
+# 功能执行器（schema feature -> 实际收发）
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FeatureResult:
+    ok: bool                    # 命中主 check（业务意义上的成功）
+    response: bytes | None
+    branch: str | None          # None=主分支；否则为 alt 的 label
+    decoded: dict               # extract 出来的字段
+
+
+def execute_feature(
+    io: ReportIO,
+    feature: dict,
+    params: dict | None = None,
+    timeout_ms: int = 600,
+) -> FeatureResult:
+    """按协议库 feature 定义执行一次收发（command/read 通用）。
+
+    params 未提供的项自动回填 params 定义里的 default。
+    """
+    merged = dict(params or {})
+    for name, spec in feature.get("params", {}).items():
+        merged.setdefault(name, spec.get("default", 0))
+    data = render_template(feature["template"], merged)
+
+    response_spec = feature.get("response", {})
+    alt = response_spec.get("alt")
+    checks: list = []
+    if "check" in response_spec:
+        checks.append(("primary", response_spec["check"]))
+    elif alt is None:
+        checks.append(("primary", None))
+    if alt is not None:
+        checks.append((alt.get("label") or "alt", alt["check"]))
+
+    result = io.call_multi(data, checks, merged, timeout_ms)
+    if result is None:
+        return FeatureResult(False, None, None, {})
+    response, label = result
+    if label == "primary":
+        spec = response_spec
+        branch = None
+    else:
+        spec = alt
+        branch = label
+    decoded = extract_fields(response, spec.get("extract", {}))
+    return FeatureResult(label == "primary", response, branch, decoded)
 
 
 def _open_device(path: bytes):

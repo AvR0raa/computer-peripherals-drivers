@@ -7,6 +7,7 @@ from core.report_io import (
     RenderError,
     ReportError,
     ReportIO,
+    execute_feature,
     extract_fields,
     match_response,
     render_template,
@@ -189,3 +190,71 @@ def test_close_is_idempotent(install):
     io.close()
     io.close()
     assert io._dev is None
+
+
+# ---------------------------------------------------------------------------
+# call_multi / execute_feature（M2.3 引擎分支路由）
+# ---------------------------------------------------------------------------
+
+PING_FEATURE = {
+    "id": "ping", "kind": "command", "report": "output",
+    "template": [16, "{device_index}", 0, "{request_id}", 0, 0, "{mark}"],
+    "params": {
+        "device_index": {"type": "int", "default": 255, "min": 0, "max": 255},
+        "request_id": {"type": "int", "default": 16, "min": 16, "max": 23},
+        "mark": {"type": "int", "default": 66, "min": 0, "max": 255},
+    },
+    "response": {
+        "check": [16, "{device_index}", 0, "{request_id}", None, None, "{mark}"],
+        "extract": {"major": 4, "minor": 5},
+        "alt": {
+            "label": "错误应答",
+            "check": [16, "{device_index}", 143, None, None, None, None],
+            "extract": {"error_code": 5},
+        },
+    },
+}
+
+P = {"device_index": 255, "request_id": 16, "mark": 66}
+
+
+def test_execute_feature_primary_branch(install):
+    install(responses=[[0x10, 0xFF, 0x00, 0x10, 0x02, 0x50, 0x42]])
+    io = ReportIO(path=b"fake")
+    result = execute_feature(io, PING_FEATURE, P, timeout_ms=300)
+    assert result.ok and result.branch is None
+    assert result.decoded == {"major": 2, "minor": 0x50}
+
+
+def test_execute_feature_alt_branch(install):
+    install(responses=[[0x10, 0xFF, 0x8F, 0x00, 0x10, 0x01, 0x00]])
+    io = ReportIO(path=b"fake")
+    result = execute_feature(io, PING_FEATURE, P, timeout_ms=300)
+    assert not result.ok
+    assert result.branch == "错误应答"
+    assert result.decoded == {"error_code": 1}
+
+
+def test_execute_feature_timeout(install):
+    install(responses=[])
+    io = ReportIO(path=b"fake")
+    result = execute_feature(io, PING_FEATURE, P, timeout_ms=80)
+    assert result.response is None and not result.ok
+
+
+def test_execute_feature_param_defaults(install):
+    dev = install(responses=[[0x10, 0xFF, 0x00, 0x10, 0x00, 0x00, 0x42]])
+    io = ReportIO(path=b"fake")
+    result = execute_feature(io, PING_FEATURE, None, timeout_ms=300)
+    assert result.ok
+    assert dev.written[0] == b"\x10\xff\x00\x10\x00\x00\x42"   # default 255/16/66 回填
+
+
+def test_call_multi_branch_order(install):
+    """响应同时匹配多分支时，按 checks 顺序取第一个。"""
+    install(responses=[[0x10, 0xFF, 0x00, 0x10, 0x00, 0x00, 0x42]])
+    io = ReportIO(path=b"fake")
+    checks = [("a", [16, 255, 0]), ("b", [16, 255, None])]
+    with io:
+        result = io.call_multi(b"\x00", checks, {}, 200)
+    assert result == (bytes([0x10, 0xFF, 0x00, 0x10, 0x00, 0x00, 0x42]), "a")
