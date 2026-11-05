@@ -1,0 +1,5 @@
+# M1 依赖
+# 注意：不要安装 `hid` 包（ctypes 包装器，Windows 上与 hidapi 轮子冲突，
+# 会遮蔽 hid 模块导致 "Unable to load ... hidapi.dll"）。
+hidapi>=0.14
+pytest>=8
