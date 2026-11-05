@@ -41,6 +41,7 @@ from core.fingerprint import (
     fingerprint,
     load_db,
 )
+from core.probe import probe_vendor_interfaces, suspect_rawhid_interfaces
 from core.report_io import ReportIO, execute_feature
 
 STATUS_COLOR = {
@@ -138,11 +139,15 @@ class MainWindow(QMainWindow):
         header = QHBoxLayout()
         title = QLabel("<b>设备列表</b>")
         self._count_label = QLabel("")
+        batch_btn = QPushButton("批量探测")
+        batch_btn.setToolTip("逐台探测已知品牌设备：有协议的跑 ping，否则只读探测 vendor 配置通道")
+        batch_btn.clicked.connect(self._on_batch_probe)
         refresh_btn = QPushButton("刷新")
         refresh_btn.clicked.connect(self.refresh_devices)
         header.addWidget(title)
         header.addStretch(1)
         header.addWidget(self._count_label)
+        header.addWidget(batch_btn)
         header.addWidget(refresh_btn)
         left_layout.addLayout(header)
 
@@ -170,8 +175,13 @@ class MainWindow(QMainWindow):
         desc_row = QHBoxLayout()
         self._desc_btn = QPushButton("读取并解析报告描述符")
         self._desc_btn.clicked.connect(self._on_read_descriptor)
+        self._vendor_probe_btn = QPushButton("Vendor 只读探测")
+        self._vendor_probe_btn.setToolTip(
+            "对 vendor 自定义接口(usage page ≥ 0xFF00)只读 feature report——多设备测试/逆向起点")
+        self._vendor_probe_btn.clicked.connect(self._on_vendor_probe)
         self._desc_status = QLabel("")
         desc_row.addWidget(self._desc_btn)
+        desc_row.addWidget(self._vendor_probe_btn)
         desc_row.addWidget(self._desc_status, 1)
         right_layout.addLayout(desc_row)
 
@@ -391,6 +401,135 @@ class MainWindow(QMainWindow):
                 dev.close()
         except Exception:
             return None
+
+    def _on_vendor_probe(self):
+        """单设备 vendor 配置通道只读探测（任务: 多设备测试）。"""
+        key = self._current_key()
+        if key is None:
+            return
+        ifaces = self._devices.get(key, [])
+        self._vendor_probe_btn.setEnabled(False)
+        self._desc_status.setText("只读探测中…")
+
+        def job():
+            results = probe_vendor_interfaces(ifaces, self._read_descriptor)
+            rawhids = suspect_rawhid_interfaces(ifaces, self._read_descriptor)
+            if not results and not rawhids:
+                return (f"{key}: 没有发现 vendor 自定义接口或 rawhid 配置通道\n"
+                        "说明: 配置通道可能藏在标准接口里，先看描述符解析结果")
+            lines = []
+            for r in results:
+                head = f"UP:0x{r.usage_page:04X} U:0x{r.usage:04X}"
+                if r.error:
+                    lines.append(f"{head}  {r.error}")
+                    continue
+                for report_id, data in r.reads.items():
+                    body = data.hex(" ") if data else "<读取失败>"
+                    lines.append(f"{head}  feature id={report_id}: {body}")
+            for r in rawhids:
+                data = r.reads.get("input_passive")
+                body = data.hex(" ") if data else "<200ms 内无主动推送>"
+                lines.append(f"UP:0x{r.usage_page:04X} U:0x{r.usage:04X}  [rawhid] {r.note}\n"
+                             f"    被动监听: {body}")
+            return "\n".join(lines)
+
+        worker = Worker(job, self)
+
+        def on_done(payload):
+            self._vendor_probe_btn.setEnabled(True)
+            status, value = payload
+            self._desc_status.setText("")
+            self.log_line.emit(("Vendor 只读探测 ── " + value) if status == "ok"
+                               else f"Vendor 只读探测出错: {value}")
+
+        worker.done.connect(on_done)
+        self._workers.append(worker)
+        worker.start()
+
+    def _on_batch_probe(self):
+        """批量探测：多设备测试入口。已知品牌逐台探测并汇总在线状态。"""
+        keys = list(self._devices.keys())
+        self.log_line.emit(f"── 批量探测开始（{len(keys)} 台设备）──")
+
+        def probe_one(key, ifaces, log):
+            first = ifaces[0]
+            result = fingerprint(first, self.db)
+            if result.brand is None:
+                log(f"[{key}] 跳过（未知品牌，非外设厂商）")
+                return None
+            label = f"{key} {result.brand_zh or result.brand} {first.product or ''}".strip()
+
+            # 1) 有协议 + ping → ping 探测
+            entry = result.entry or {}
+            proto = entry.get("protocol")
+            ping = next((f for f in (proto or {}).get("features", [])
+                         if f.get("id") == "ping"), None)
+            if proto and ping:
+                match = proto["transport"]["match"]
+                target = next((d for d in ifaces
+                               if f"{d.usage_page:04X}" == match["usage_page"]
+                               and f"{d.usage:04X}" == match["usage"]), None)
+                if target is None:
+                    log(f"[{label}] 协议接口未枚举到（UP:{match['usage_page']} U:{match['usage']}）")
+                    return (key, "无接口", label)
+                io = ReportIO(target.path)
+                io.on_history = lambda e: self.log_line.emit(
+                    f"{'TX>' if e.direction == 'tx' else 'RX<'} {e.data.hex(' ')}")
+                try:
+                    with io:
+                        r = execute_feature(io, ping, None, timeout_ms=400)
+                finally:
+                    io.on_history = None
+                if r.response is None:
+                    log(f"[{label}] ping 无响应")
+                    return (key, "不在线", label)
+                if r.ok:
+                    log(f"[{label}] ping ✅ HID++ {r.decoded.get('major')}."
+                        f"{r.decoded.get('minor')}")
+                else:
+                    log(f"[{label}] ping 应答: {r.branch} "
+                        f"error=0x{r.decoded.get('error_code', 0):02X}")
+                return (key, "在线", label)
+
+            # 2) 无协议 → vendor 只读探测 + rawhid 通道识别
+            results = probe_vendor_interfaces(ifaces, self._read_descriptor)
+            rawhids = suspect_rawhid_interfaces(ifaces, self._read_descriptor)
+            if not results and not rawhids:
+                log(f"[{label}] 无 vendor 自定义接口/rawhid 配置通道")
+                return (key, "无配置通道", label)
+            channel_count = sum(len(r.reads) for r in results)
+            for r in results:
+                for report_id, data in r.reads.items():
+                    body = data.hex(" ") if data else "<读取失败>"
+                    log(f"[{label}] UP:0x{r.usage_page:04X} feature id={report_id}: {body}")
+            for r in rawhids:
+                log(f"[{label}] rawhid 配置通道: UP:0x{r.usage_page:04X} "
+                    f"U:0x{r.usage:04X}（写入能力待 M4 验证）")
+            return (key, f"探测到 {channel_count + len(rawhids)} 个配置通道", label)
+
+        def job():
+            summary = []
+            for key in keys:
+                ifaces = self._devices.get(key, [])
+                outcome = probe_one(key, ifaces, lambda s: self.log_line.emit(s))
+                if outcome:
+                    summary.append(outcome)
+            return summary
+
+        worker = Worker(job, self)
+
+        def on_done(payload):
+            status, value = payload
+            if status != "ok":
+                self.log_line.emit(f"批量探测出错: {value}")
+                return
+            online = [s for s in value if s[1] == "在线"]
+            self.log_line.emit(
+                f"── 批量探测完成: 已知品牌 {len(value)} 台，在线 {len(online)} 台 ──")
+
+        worker.done.connect(on_done)
+        self._workers.append(worker)
+        worker.start()
 
     def _on_run_feature(self, key: str, feature: dict, spinboxes: dict):
         ifaces = self._devices.get(key, [])

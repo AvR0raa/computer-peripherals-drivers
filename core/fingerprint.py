@@ -21,6 +21,9 @@ class ProtocolDBError(RuntimeError):
 
 
 _PLACEHOLDER_RE = re.compile(r"^\{[A-Za-z_]\w*\}$")
+# 计算型占位符 {#negsum}（校验和）；与 report_io 的定义保持一致（模块间禁止互相 import）
+_COMPUTED_RE = re.compile(r"^\{#([a-z_]+)\}$")
+_COMPUTED_ALGOS = {"negsum"}
 _VALID_KINDS = {"command", "read", "write"}
 _VALID_REPORTS = {"output", "feature"}
 
@@ -69,9 +72,16 @@ def _validate_protocol(vid_pid: str, protocol) -> None:
         if not isinstance(template, list):
             raise ProtocolDBError(f"{fwhere}.template: 必须是数组")
         for element in template:
-            if not (_is_byte(element) or (isinstance(element, str) and _PLACEHOLDER_RE.match(element))):
+            valid = (
+                _is_byte(element)
+                or (isinstance(element, str) and _PLACEHOLDER_RE.match(element))
+                or (isinstance(element, str)
+                    and (m := _COMPUTED_RE.match(element)) is not None
+                    and m.group(1) in _COMPUTED_ALGOS)
+            )
+            if not valid:
                 raise ProtocolDBError(
-                    f"{fwhere}.template: 元素须为 0-255 整数或 {{参数}} 占位符，收到 {element!r}")
+                    f"{fwhere}.template: 元素须为 0-255 整数、{{参数}} 或 {{#算法}} 占位符，收到 {element!r}")
         if feature["kind"] == "write" and not feature.get("read_from"):
             raise ProtocolDBError(f"{fwhere}: kind=write 必须提供 read_from（读回验证用）")
         _validate_params(fwhere, feature.get("params"))

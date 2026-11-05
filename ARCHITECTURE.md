@@ -268,3 +268,40 @@ def safe_write(io, write_feature: dict, read_feature: dict | None,
 - 控件映射：params int+min/max → QSpinBox；其余占位文本；command 功能 → "执行"按钮
 - 全部设备 I/O 在工作线程（QThread + 信号回传），UI 不阻塞；M1 只读原则不变
 - 入口：`python gui.py`
+
+---
+
+# 架构变更记录（M5 附加节：设备扩容 + 多设备测试）
+
+## 8. core/probe.py — vendor 配置通道只读探测
+
+```python
+def feature_report_ids(info: DescriptorInfo) -> list[int]   # 纯函数
+def probe_interface(path, usage_page, usage, read_descriptor) -> ProbeResult
+def probe_vendor_interfaces(ifaces, read_descriptor) -> list[ProbeResult]
+def suspect_rawhid_interfaces(ifaces, read_descriptor) -> list[ProbeResult]
+    # usage=0x0000 + 64字节 in/out 的 rawhid 风格配置通道识别（国产键盘常见形态）
+    # 只做被动 input 读取，零写入
+
+@dataclass ProbeResult: usage_page, usage, descriptor_len, feature_ids, reads, error, note
+```
+
+依赖方向：probe → descriptor + report_io（与 safe_write 同级，单向不循环）。
+
+## 9. 引擎扩展（core/report_io.py，接口追加不改既有签名）
+
+- `render_template` 元素支持 `{#negsum}`：校验和 = 0xFF-(前面字节之和&0xFF)
+  （ROYUAN/前行者方案）
+- `execute_feature` 支持 `report=feature` 命令路径：send_feature 后
+  get_feature 同 ID 读回并按 checks 分支匹配（无超时轮询）
+
+## 10. db.json v2 追加（向前兼容）
+
+- 顶层可选 `pending_brands`: `[{"name","name_zh","note"}]` —— 待实测 VID 的品牌
+- brands/devices 条目可选 `note` 自由文本（协议线索、来源、危险提示）
+
+## 11. GUI 多设备测试
+
+- 设备列表头部「批量探测」：已知品牌逐台路由——有 protocol+ping 的跑 ping，
+  否则 vendor 只读探测 + rawhid 识别
+- 详情页「Vendor 只读探测」：当前设备的 vendor feature 读取 + rawhid 被动监听

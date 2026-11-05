@@ -10,12 +10,20 @@
     "0B05": { "name": "ASUS", "name_zh": "华硕/ROG", "sdk": ["AuraSDK"] },
     "046A": { "name": "CHERRY", "name_zh": "樱桃" },
     "25A7": { "name": "Dareu", "name_zh": "达尔优" },
-    "291D": { "name": "MCHOSE", "name_zh": "迈从" },
+    "291D": { "name": "MCHOSE", "name_zh": "迈从", "note": "鼠标线 (本机 V9 PRO 实测)" },
+    "41E4": { "name": "MCHOSE", "name_zh": "迈从", "note": "键盘线 (本机 Ace68-II 实测)" },
+    "3151": { "name": "attack shark", "name_zh": "前行者",
+              "note": "ROYUAN 方案: usage page 0xFFFF usage 2, 64字节 feature 报文(id=0), 校验和=0xFF-(sum&0xFF), 响应字节0回显opcode。写入有严格限速(过快可致端点假死)且有危险opcode(含flash擦除)——只读探测优先。参考: dnim.dev/blog/royuan-keyboard-protocol" },
     "09DA": { "name": "A4Tech", "name_zh": "双飞燕" },
     "045E": { "name": "Microsoft", "name_zh": "微软" },
     "05AC": { "name": "Apple", "name_zh": "苹果" },
     "3434": { "name": "Keychron", "name_zh": "Keychron" }
   },
+
+  "pending_brands": [
+    { "name": "MAGEGEE", "name_zh": "美嘉獅",
+      "note": "无公开VID，常见为OEM芯片方案(Holtek 04D9/Sonix等)。插上设备跑 cli.py list 或 GUI 实测 VID:PID 后移入 brands。" }
+  ],
 
   "devices": {
     "046D:C54D": {
@@ -61,7 +69,14 @@
     "291D:385D": {
       "brand": "MCHOSE",
       "product": "MCHOSE V9 PRO",
-      "note": "游戏鼠标；接口0 复用 6 个 usage page，vendor 页 0xFF21/0xFF22/0xFF90/0xFF82，feature report id=237(0xED) 15字节，疑似配置通道",
+      "note": "游戏鼠标；接口0 复用 6 个 usage page，vendor 页 0xFF21(feature id=237,15字节)/0xFF22(feature id=170,63字节)/0xFF90/0xFF82，疑似配置通道",
+      "source": "hidapi-observed",
+      "verified": false
+    },
+    "41E4:2116": {
+      "brand": "MCHOSE",
+      "product": "Ace68-II",
+      "note": "磁轴游戏键盘（Ace 68 系列）。接口1(usage=0x0000, 64字节in/out)=rawhid风格配置通道，写入协议待 M4 学习模式逆向",
       "source": "hidapi-observed",
       "verified": false
     }
