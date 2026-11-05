@@ -305,3 +305,46 @@ def suspect_rawhid_interfaces(ifaces, read_descriptor) -> list[ProbeResult]
 - 设备列表头部「批量探测」：已知品牌逐台路由——有 protocol+ping 的跑 ping，
   否则 vendor 只读探测 + rawhid 识别
 - 详情页「Vendor 只读探测」：当前设备的 vendor feature 读取 + rawhid 被动监听
+
+---
+
+# 架构变更记录（M4 附加节：学习模式）
+
+## 12. core/recorder.py — 录制器（任务 4.1）
+
+```python
+@dataclass(frozen=True) RecorderTarget: label, path, feature_ids=()
+@dataclass(frozen=True) CaptureEntry: ts, source, kind("input"|"feature_read"|"error"),
+                                       report_id(input 取 data[0] 最佳估计), data(hex)
+
+class Recorder:
+    def __init__(targets, read_timeout_ms=50, max_entries=200_000)
+    def start() -> None                       # 每目标一个 daemon 线程
+    def stop(timeout=3.0) -> None
+    is_recording: bool;  overflowed: bool
+    def entries() -> list[CaptureEntry]       # 线程安全快照
+    def snapshot_features() -> int            # 手动快照（改配置前后各拍）
+    def save_jsonl(path) -> int
+    @staticmethod load_jsonl(path) -> list[CaptureEntry]
+```
+
+- 只读（read_input/get_feature），零写入；Windows input 广播 → 后台录制不影响使用
+- 会话 jsonl 每行：{"ts","source","kind","report_id","data"}
+- input 读取异常视为该目标死亡：记 error 条目后线程退出
+- 超过 max_entries 置 overflowed 并自动停录
+
+## 13. core/diffing.py — 差分分析（任务 4.2）
+
+```python
+@dataclass(frozen=True) ByteChange: offset, before(int|None), after(int|None)
+@dataclass(frozen=True) GroupDiff: source, kind, report_id, before_len, after_len,
+                                    changes, is_new, volatile
+
+def diff_sessions(before, after) -> list[GroupDiff]
+    # 按 (source, kind, report_id) 分组取最后一条；error 条目跳过；
+    # 无 before 的组 = is_new；逐字节对比只留变化字节
+def volatile_groups(entries, threshold=8) -> set    # 疑似数据流噪声标记
+def format_diff(GroupDiff) -> list[str]             # 人读行（单组最多 16 变化字节）
+```
+
+依赖方向：recorder/diffing → report_io（与 probe 同级）。GUI 集成在任务 4.4。
