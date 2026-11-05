@@ -4,3 +4,4 @@
 hidapi>=0.14
 pytest>=8
 PySide6>=6.6          # M3 GUI
+# 打包另需: pip install pyinstaller（M6，见 scripts/build_exe.bat）
