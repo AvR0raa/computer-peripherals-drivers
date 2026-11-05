@@ -20,3 +20,4 @@ recordings/
 # OS
 Thumbs.db
 .DS_Store
+profiles/**
