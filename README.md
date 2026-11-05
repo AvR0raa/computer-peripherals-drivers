@@ -10,14 +10,30 @@
 
 除驱动归档外，本仓库同时开发一个开源外设调试与控制工具（详见 [plan.md](plan.md) / [ARCHITECTURE.md](ARCHITECTURE.md)）：
 
+**GUI 桌面软件**（推荐）：
+
 ```
 pip install -r requirements.txt
-python cli.py list                 # 列出全部 HID 设备 + 识别状态
-python cli.py info 291D:385D --desc   # 单设备详情 + 描述符解析
-python cli.py watch                # 热插拔监视
+python gui.py
 ```
 
-当前进度：**M1 设备识别器已完成**（枚举 / 描述符解析 / 指纹匹配，全部只读零风险）。
+- 左侧设备列表（按识别状态着色，热插拔实时刷新）
+- 右侧详情：接口表、描述符解析、协议功能按钮（如 HID++ Ping 探测）
+- 底部 TX/RX hex 日志
+
+**命令行**：
+
+```
+python cli.py list                    # 列出全部 HID 设备 + 识别状态
+python cli.py info 291D:385D --desc   # 单设备详情 + 描述符解析
+python cli.py watch                   # 热插拔监视
+```
+
+当前进度：
+- ✅ **M1 设备识别器**（枚举 / 描述符解析 / 指纹匹配，只读零风险）`v0.1.0-m1`
+- ✅ **M2 协议库 + HID 直通引擎**（schema v2 / report 读写器 / 安全写机制 / Solaar HID++ ping 已真机验证）`v0.2.0-m2`
+- ✅ **M3 GUI**（设备列表 / 动态控制面板 / hex 日志）`v0.3.0-m3`
+- ⬜ M4 学习模式（差分逆向）、M5 扩设备 + SDK 桥
 
 ## 涵盖范围
 
