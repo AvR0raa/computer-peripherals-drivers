@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 import core.device_manager as dm
 from core.battery import BatteryResult, scan_all
 from core.descriptor import parse_report_descriptor, summary
+from core.dpi import get_dpi_list, read_dpi, set_dpi
 from core.diffing import diff_sessions, format_diff
 from core.fingerprint import (
     DEFAULT_DB_PATH,
@@ -64,6 +65,7 @@ from core.profiles import (
     load_profile,
     save_profile,
 )
+from core.hidpp import HidppLink
 from core.recorder import Recorder, RecorderTarget
 from core.report_io import ReportIO, execute_feature
 from core.safe_write import safe_write
@@ -451,6 +453,109 @@ class MainWindow(QMainWindow):
                 lambda _, k=key, f=feature, s=dict(spinboxes): self._on_run_feature(k, f, s))
             form.addRow(run_btn)
             self._protocol_box.addWidget(box)
+
+        if result.brand == "Logitech":
+            self._build_dpi_panel(key, ifaces)
+
+    def _build_dpi_panel(self, key: str, ifaces: list):
+        """罗技设备 DPI 控制面板（M2.5b，HID++ 0x2201）。"""
+        box = QGroupBox("鼠标 DPI（HID++ Adjustable DPI）")
+        form = QFormLayout(box)
+
+        slot_spin = QSpinBox()
+        slot_spin.setRange(0, 7)
+        slot_spin.setValue(1)
+        form.addRow("接收器槽位（1-7，直连选 0=0xFF）", slot_spin)
+
+        dpi_spin = QSpinBox()
+        dpi_spin.setRange(50, 32000)
+        dpi_spin.setSingleStep(50)
+        dpi_spin.setValue(800)
+        dpi_slider = QSlider(Qt.Horizontal)
+        dpi_slider.setRange(50, 32000)
+        dpi_slider.setValue(800)
+        dpi_spin.valueChanged.connect(dpi_slider.setValue)
+        dpi_slider.valueChanged.connect(dpi_spin.setValue)
+        form.addRow("DPI", dpi_spin)
+        form.addRow("", dpi_slider)
+
+        info = QLabel("—")
+        info.setWordWrap(True)
+
+        def build_link():
+            short = next((d for d in ifaces
+                          if f"{d.usage_page:04X}" == "FF00" and f"{d.usage:04X}" == "0001"), None)
+            long_if = next((d for d in ifaces
+                            if f"{d.usage_page:04X}" == "FF00" and f"{d.usage:04X}" == "0002"), None)
+            if short is None and long_if is None:
+                return None
+            return HidppLink(short.path if short else None, long_if.path if long_if else None)
+
+        def on_read():
+            dev = 0xFF if slot_spin.value() == 0 else slot_spin.value()
+            info.setText("读取中…（设备睡着时请动一动鼠标）")
+
+            def job():
+                link = build_link()
+                if link is None:
+                    return None, "未找到 FF00 HID++ 接口"
+                with link:
+                    dpi, default = read_dpi(link, dev)
+                    lst = get_dpi_list(link, dev)
+                return (dpi, default, lst), None
+
+            worker = Worker(job, self)
+
+            def done(payload):
+                status, value = payload
+                if status != "ok":
+                    info.setText(f"读取出错: {value}")
+                    return
+                result, err = value
+                if err:
+                    info.setText(err)
+                    return
+                dpi, default, lst = result
+                if dpi is None:
+                    info.setText("读取失败（设备可能睡眠中，动一动鼠标再试）")
+                    return
+                range_text = f"档位 {lst[0]}-{lst[-1]}（{len(lst)} 档）" if lst else "档位表未知"
+                info.setText(f"当前 {dpi} DPI · 默认 {default or '?'} · {range_text}")
+                if lst:
+                    dpi_spin.setRange(lst[0], lst[-1])
+                    dpi_slider.setRange(lst[0], lst[-1])
+
+            worker.done.connect(done)
+            self._workers.append(worker)
+            worker.start()
+
+        def on_set():
+            dev = 0xFF if slot_spin.value() == 0 else slot_spin.value()
+            target = dpi_spin.value()
+            self.log_line.emit(f"── DPI 设置: 槽位{slot_spin.value()} → {target}")
+
+            def job():
+                link = build_link()
+                if link is None:
+                    return "未找到 FF00 HID++ 接口"
+                with link:
+                    outcome = set_dpi(link, dev, target)
+                return "\n".join(outcome.log)
+
+            worker = Worker(job, self)
+            worker.done.connect(lambda payload: self.log_line.emit(
+                ("DPI 结果\n" + payload[1]) if payload[0] == "ok" else f"DPI 设置出错: {payload[1]}"))
+            self._workers.append(worker)
+            worker.start()
+
+        read_btn = QPushButton("读取当前 DPI / 档位表")
+        read_btn.clicked.connect(on_read)
+        set_btn = QPushButton("应用 DPI（读回验证+失败自动回滚）")
+        set_btn.clicked.connect(on_set)
+        form.addRow(read_btn)
+        form.addRow(set_btn)
+        form.addRow(info)
+        self._protocol_box.addWidget(box)
 
     # ---- 总览仪表板（任务 3.6）----
 

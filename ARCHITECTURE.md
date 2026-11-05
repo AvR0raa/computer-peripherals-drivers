@@ -447,3 +447,29 @@ BatteryResult: vidpid/product/percent/voltage_mv/source/display
 依赖：battery → hidpp + descriptor + report_io。GUI 总览「读取全部电量」+ 卡片
 电量行（`_battery_cache`）；CLI `python cli.py battery`。
 已知边界：写触发型电量（部分国产设备）读不到 → 标记"需学习模式"，协议入库后自动接上。
+
+---
+
+# 架构变更记录（M2.5b 附加节：鼠标 DPI + HID++ 双通道）
+
+## 20. HidppLink 双通道（core/hidpp.py）
+
+- C54D 实测：短报文(0x10) 走 FF00:0001，长报文(0x11) 走 FF00:0002
+- `HidppLink(short_path, long_path)`：call_multi 按报文 ID 路由发送，
+  **双通道轮询收应答**（应答长度与请求无关，短请求的长应答出现在长通道）
+- `_call_feature` check 兼容两种 rid（[[0x10,0x11], ...]）；payload 取 resp[4:20]
+- `ping`：有长通道先试长报文（PRO X2 只应答长报文，实测 HID++ 4.2）；
+  0x08(UNKNOWN_DEVICE) 换通道重试；**应答不回显 mark**（PRO X2 实测），校验只到 reqLo
+
+## 21. core/dpi.py — Adjustable DPI 0x2201（M2.5b）
+
+```python
+def get_dpi_list(link, dev) -> list[int]   # funct1 分页列表, 步进编码 0b111 展开
+def read_dpi(link, dev) -> (dpi, default)  # funct2; dpi==0 → 用默认值(Solaar 语义)
+def set_dpi(link, dev, new_dpi) -> DpiOutcome   # 读旧→写(funct3)→读回→失败回滚
+DpiOutcome: ok/wrote/old/readback/rolled_back/log
+```
+
+布局来源：Solaar settings_templates.AdjustableDpi（read_fnid 0x20/write_fnid 0x30/
+write_prefix 0x00）+ produce_dpi_list（ignore=1、0xE000|step 编码）。
+安全范围 50-32000。GUI：罗技设备详情页自动出现 DPI 面板（槽位/滑条/读/写）。

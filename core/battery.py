@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from core.descriptor import ReportField, parse_report_descriptor
-from core.hidpp import HidppBattery, ping, read_battery
+from core.hidpp import HidppBattery, HidppLink, ping, read_battery
 from core.report_io import ReportIO
 
 BATTERY_USAGE_PAGE = 0x85   # HID Battery System
@@ -139,21 +139,25 @@ def scan_all(
 
 
 def _scan_hidpp(vidpid: str, ifaces: list) -> BatteryResult | None:
-    """罗技：接收器协议接口逐槽位 ping；直连设备 dev=0xFF。"""
-    vendor_ifaces = [d for d in ifaces if f"{d.usage_page:04X}" == "FF00" and f"{d.usage:04X}" == "0001"]
-    for iface in vendor_ifaces:
-        io = ReportIO(iface.path)
-        with io:
-            # 直连设备先试 0xFF
-            result = _hidpp_battery_for(io, 0xFF)
+    """罗技：短/长双通道（FF00:0001=短，FF00:0002=长），接收器槽位 ping + 直连 0xFF。"""
+    short = next((d for d in ifaces
+                  if f"{d.usage_page:04X}" == "FF00" and f"{d.usage:04X}" == "0001"), None)
+    long_if = next((d for d in ifaces
+                    if f"{d.usage_page:04X}" == "FF00" and f"{d.usage:04X}" == "0002"), None)
+    if short is None and long_if is None:
+        return None
+    link = HidppLink(short.path if short else None, long_if.path if long_if else None)
+    with link:
+        # 直连设备先试 0xFF
+        result = _hidpp_battery_for(link, 0xFF)
+        if result is not None:
+            return result
+        # 接收器槽位 1-7（长报文优先，新款设备如 PRO X2 只应答长报文）
+        for slot in range(1, 8):
+            result = _hidpp_battery_for(link, slot)
             if result is not None:
+                result.detail = f"槽位 {slot}: {result.detail}"
                 return result
-            # 接收器槽位 1-7
-            for slot in range(1, 8):
-                result = _hidpp_battery_for(io, slot)
-                if result is not None:
-                    result.detail = f"槽位 {slot}: {result.detail}"
-                    return result
     return None
 
 
