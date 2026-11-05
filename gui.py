@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -27,6 +29,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -35,14 +38,22 @@ from PySide6.QtWidgets import (
 
 import core.device_manager as dm
 from core.descriptor import parse_report_descriptor, summary
+from core.diffing import diff_sessions, format_diff
 from core.fingerprint import (
     DEFAULT_DB_PATH,
     DeviceStatus,
     fingerprint,
     load_db,
+    save_db,
 )
-from core.probe import probe_vendor_interfaces, suspect_rawhid_interfaces
+from core.probe import (
+    feature_report_ids,
+    probe_vendor_interfaces,
+    suspect_rawhid_interfaces,
+)
+from core.recorder import Recorder, RecorderTarget
 from core.report_io import ReportIO, execute_feature
+from core.wizard import build_drafts, build_protocol_block, merge_into_db
 
 STATUS_COLOR = {
     DeviceStatus.KNOWN: QColor("#2ecc71"),
@@ -208,7 +219,12 @@ class MainWindow(QMainWindow):
         splitter.addWidget(top)
         splitter.addWidget(self._log)
         layout.addWidget(splitter)
-        self.setCentralWidget(root)
+
+        # 顶部标签页：设备页（原布局）+ 学习模式页
+        self._tabs = QTabWidget()
+        self._tabs.addTab(root, "设备")
+        self._tabs.addTab(self._build_learn_tab(), "学习模式")
+        self.setCentralWidget(self._tabs)
 
     # ---- 设备列表 ----
 
@@ -238,6 +254,7 @@ class MainWindow(QMainWindow):
             self._list.addItem(item)
             if key == selected:
                 item.setSelected(True)
+        self._refresh_learn_targets()
 
     def _current_key(self) -> str | None:
         items = self._list.selectedItems()
@@ -259,6 +276,9 @@ class MainWindow(QMainWindow):
         if self._watcher:
             self._watcher.stop_watching()
             self._watcher.wait(2000)
+        if self._learn_recorder is not None:
+            self._learn_timer.stop()
+            self._learn_recorder.stop()
         super().closeEvent(event)
 
     # ---- 详情页 ----
@@ -353,6 +373,195 @@ class MainWindow(QMainWindow):
                 lambda _, k=key, f=feature, s=dict(spinboxes): self._on_run_feature(k, f, s))
             form.addRow(run_btn)
             self._protocol_box.addWidget(box)
+
+    # ---- 学习模式页（M4.4）----
+
+    def _build_learn_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        tip = QLabel(
+            "逆向未知设备配置协议：① 勾选要录制的接口 → ② 开始录制 → ③ 点「标记起点」"
+            "→ ④ 去官方驱动软件改一次设置（如 DPI 800→1600）→ ⑤ 停止并分析 → ⑥ 填说明后入库（unverified）")
+        tip.setWordWrap(True)
+        layout.addWidget(tip)
+
+        self._learn_targets = QListWidget()
+        self._learn_targets.setToolTip("vendor 自定义页(≥0xFF00)与 rawhid(usage=0) 接口")
+        layout.addWidget(self._learn_targets, 1)
+
+        btn_row = QHBoxLayout()
+        self._learn_start_btn = QPushButton("开始录制")
+        self._learn_mark_btn = QPushButton("标记起点")
+        self._learn_stop_btn = QPushButton("停止并分析")
+        self._learn_commit_btn = QPushButton("生成草稿入库（unverified）")
+        for b in (self._learn_mark_btn, self._learn_stop_btn, self._learn_commit_btn):
+            b.setEnabled(False)
+        self._learn_start_btn.clicked.connect(self._on_learn_start)
+        self._learn_mark_btn.clicked.connect(self._on_learn_mark)
+        self._learn_stop_btn.clicked.connect(self._on_learn_stop)
+        self._learn_commit_btn.clicked.connect(self._on_learn_commit)
+        btn_row.addWidget(self._learn_start_btn)
+        btn_row.addWidget(self._learn_mark_btn)
+        btn_row.addWidget(self._learn_stop_btn)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self._learn_commit_btn)
+        layout.addLayout(btn_row)
+
+        self._learn_note = QLineEdit()
+        self._learn_note.setPlaceholderText("描述你刚做了什么（例: DPI 800→1600 / RGB 改红色 / 关闭呼吸灯）")
+        layout.addWidget(self._learn_note)
+
+        self._learn_status = QLabel("空闲")
+        layout.addWidget(self._learn_status)
+
+        self._learn_output = QPlainTextEdit()
+        self._learn_output.setReadOnly(True)
+        self._learn_output.setFont(QFont("Consolas", 9))
+        self._learn_output.setPlaceholderText("差分分析结果…")
+        layout.addWidget(self._learn_output, 1)
+
+        # 运行态
+        self._learn_recorder: Recorder | None = None
+        self._learn_mark_ts: float | None = None
+        self._learn_diffs: list = []
+        self._learn_label_meta: dict = {}
+        self._learn_timer = QTimer(self)
+        self._learn_timer.setInterval(500)
+        self._learn_timer.timeout.connect(self._learn_tick)
+        return page
+
+    def _refresh_learn_targets(self):
+        """从当前设备列表填充可录制接口（保留勾选状态）。"""
+        prev_checked = set()
+        for idx in range(self._learn_targets.count()):
+            item = self._learn_targets.item(idx)
+            if item.checkState() == Qt.Checked:
+                prev_checked.add(item.text())
+        self._learn_targets.clear()
+        for key, ifaces in self._devices.items():
+            product = (ifaces[0].product or "(未命名)")[:20]
+            for d in ifaces:
+                is_vendor = d.usage_page >= 0xFF00
+                is_rawhid = d.usage_page == 0x0001 and d.usage == 0x0000
+                if not (is_vendor or is_rawhid):
+                    continue
+                label = f"{key}/UP{d.usage_page:04X}-U{d.usage:04X}"
+                item = QListWidgetItem(f"{label}  {product}")
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked if label in prev_checked else Qt.Unchecked)
+                item.setData(Qt.UserRole, {
+                    "label": label, "vidpid": key, "path": d.path,
+                    "usage_page": d.usage_page, "usage": d.usage,
+                })
+                self._learn_targets.addItem(item)
+
+    def _learn_tick(self):
+        if self._learn_recorder is not None:
+            self._learn_status.setText(
+                f"录制中… 已捕获 {len(self._learn_recorder.entries())} 条")
+
+    def _on_learn_start(self):
+        targets: list[RecorderTarget] = []
+        meta: dict = {}
+        for idx in range(self._learn_targets.count()):
+            item = self._learn_targets.item(idx)
+            if item.checkState() != Qt.Checked:
+                continue
+            info = item.data(Qt.UserRole)
+            feature_ids: tuple = ()
+            if info["usage_page"] >= 0xFF00:
+                raw = self._read_descriptor(info["path"])
+                if raw:
+                    feature_ids = tuple(
+                        i for i in feature_report_ids(parse_report_descriptor(raw)) if i)
+            targets.append(RecorderTarget(
+                label=info["label"], path=info["path"], feature_ids=feature_ids))
+            meta[info["label"]] = info
+        if not targets:
+            self._learn_status.setText("没有勾选任何接口")
+            return
+        self._learn_label_meta = meta
+        self._learn_recorder = Recorder(targets)
+        self._learn_recorder.start()
+        self._learn_mark_ts = None
+        self._learn_diffs = []
+        self._learn_output.clear()
+        self._learn_start_btn.setEnabled(False)
+        self._learn_mark_btn.setEnabled(True)
+        self._learn_stop_btn.setEnabled(True)
+        self._learn_commit_btn.setEnabled(False)
+        self._learn_timer.start()
+        self._learn_status.setText("录制中… 先点「标记起点」，再去官方软件改设置")
+
+    def _on_learn_mark(self):
+        if self._learn_recorder is None:
+            return
+        self._learn_mark_ts = time.time()
+        self._learn_status.setText("起点已标记 —— 现在去官方软件改设置，改完回来点「停止并分析」")
+
+    def _on_learn_stop(self):
+        recorder = self._learn_recorder
+        if recorder is None:
+            return
+        self._learn_timer.stop()
+        recorder.stop()
+        entries = recorder.entries()
+        self._learn_recorder = None
+        mark = self._learn_mark_ts
+        if mark is None:
+            before, after = [], entries
+            self._learn_status.setText("⚠ 未标记起点：全部按「新报文」处理")
+        else:
+            before = [e for e in entries if e.ts < mark]
+            after = [e for e in entries if e.ts >= mark]
+            self._learn_status.setText(f"分析完成（起点前 {len(before)} 条 / 后 {len(after)} 条）")
+        self._learn_diffs = diff_sessions(before, after)
+        lines: list[str] = []
+        for d in self._learn_diffs:
+            lines.extend(format_diff(d))
+        if not lines:
+            lines = ["没有检测到差异（确认录制期间在官方软件里改了设置？）"]
+        self._learn_output.setPlainText("\n".join(lines))
+        self._learn_start_btn.setEnabled(True)
+        self._learn_mark_btn.setEnabled(False)
+        self._learn_stop_btn.setEnabled(False)
+        self._learn_commit_btn.setEnabled(any(not d.volatile for d in self._learn_diffs))
+
+    def _on_learn_commit(self):
+        if not self._learn_diffs:
+            return
+        note = self._learn_note.text().strip()
+        label_match = {
+            label: {"usage_page": f"{info['usage_page']:04X}",
+                    "usage": f"{info['usage']:04X}"}
+            for label, info in self._learn_label_meta.items()
+        }
+        drafts = build_drafts(self._learn_diffs, note, label_match)
+        if not drafts:
+            self._learn_status.setText("没有可入库的草稿（只有噪声流？）")
+            return
+        by_device: dict[str, list] = {}
+        for draft in drafts:
+            info = self._learn_label_meta.get(draft["learned"]["source"], {})
+            vidpid = info.get("vidpid")
+            if vidpid:
+                by_device.setdefault(vidpid, []).append(draft)
+        try:
+            for vidpid, device_drafts in by_device.items():
+                block = build_protocol_block(device_drafts[0].get("match"), device_drafts)
+                merge_into_db(self.db, vidpid, block, note=note or None)
+            save_db(self.db, DEFAULT_DB_PATH)
+        except Exception as exc:
+            self._learn_status.setText(f"入库失败: {exc}")
+            return
+        self.log_line.emit(
+            f"── 学习模式入库: {len(drafts)} 条草稿 → {', '.join(by_device)}（unverified）")
+        self._learn_status.setText(
+            f"✅ 已入库 {len(drafts)} 条草稿（unverified）。设备页切到该设备即可看到新功能按钮")
+        self.db = load_db(DEFAULT_DB_PATH)
+        self.refresh_devices()
+        self._learn_commit_btn.setEnabled(False)
 
     # ---- 动作 ----
 

@@ -209,13 +209,22 @@ class ReportIO:
         params: dict | None = None,
         timeout_ms: int = 500,
     ) -> tuple[bytes, str] | None:
-        """同 call()，但接受多组 (label, check) 分支，返回 (响应, 命中分支)。
+        """写 output report，然后等匹配 check 的响应（多组分支）。
 
         用于"正常应答 + 已知错误应答"两种合法响应并存的功能
         （例如 HID++ ping 的 2.0 应答与 1.0 错误应答）。
         """
-        params = params or {}
         self.write_output(data)
+        return self.read_until(checks, params, timeout_ms)
+
+    def read_until(
+        self,
+        checks: list,
+        params: dict | None = None,
+        timeout_ms: int = 500,
+    ) -> tuple[bytes, str] | None:
+        """只读轮询 input，直到命中某组 (label, check) 或超时。不写任何报文。"""
+        params = params or {}
         deadline = time.monotonic() + timeout_ms / 1000
         while True:
             remaining_ms = int((deadline - time.monotonic()) * 1000)
@@ -252,6 +261,8 @@ def execute_feature(
     report=output: 写 output 并轮询等 input 响应（HID++ 等）。
     report=feature: send_feature 后立即 get_feature 同 ID 读回
     （ROYUAN 等 feature-报文方案），无超时轮询。
+    report=input: 不写任何报文，只读轮询 input 直到匹配（学习模式
+    产出的"监听型"功能，如设备配置变更推送）。
     """
     merged = dict(params or {})
     for name, spec in feature.get("params", {}).items():
@@ -270,7 +281,9 @@ def execute_feature(
 
     if feature.get("report") == "feature":
         return _execute_feature_report(io, data, checks, response_spec, alt, merged)
-    return _execute_output_report(io, data, checks, response_spec, alt, merged, timeout_ms)
+    listen_only = feature.get("report") == "input"   # 监听型：零写入
+    return _execute_output_report(io, data, checks, response_spec, alt, merged,
+                                  timeout_ms, listen_only=listen_only)
 
 
 def _match_branches(response: bytes, checks: list, params: dict):
@@ -298,8 +311,12 @@ def _execute_feature_report(io, data, checks, response_spec, alt, params) -> Fea
     return FeatureResult(label == "primary", response, None if label == "primary" else label, decoded)
 
 
-def _execute_output_report(io, data, checks, response_spec, alt, params, timeout_ms) -> FeatureResult:
-    result = io.call_multi(data, checks, params, timeout_ms)
+def _execute_output_report(io, data, checks, response_spec, alt, params, timeout_ms,
+                           listen_only: bool = False) -> FeatureResult:
+    if listen_only:
+        result = io.read_until(checks, params, timeout_ms)   # 监听型：零写入
+    else:
+        result = io.call_multi(data, checks, params, timeout_ms)
     if result is None:
         return FeatureResult(False, None, None, {})
     response, label = result

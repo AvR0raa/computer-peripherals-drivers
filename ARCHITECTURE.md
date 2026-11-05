@@ -348,3 +348,42 @@ def format_diff(GroupDiff) -> list[str]             # 人读行（单组最多 1
 ```
 
 依赖方向：recorder/diffing → report_io（与 probe 同级）。GUI 集成在任务 4.4。
+
+---
+
+# 架构变更记录（M4.3/M4.4 附加节：引导入库 + GUI 集成）
+
+## 14. core/wizard.py — 引导入库（任务 4.3）
+
+```python
+LEARNED_PREFIX = "learned_"          # 学习产物功能 id 前缀
+
+def build_drafts(diffs, note="", label_match=None, max_changes=64) -> list[dict]
+    # GroupDiff → 协议功能草稿（kind=read）
+    #   feature_read → report="feature", template=[report_id]
+    #   input        → report="input",  template=[]（监听型零写入）
+    #   volatile 组跳过；response.check = [None]*after_len（草稿通配）
+    #   带 learned 佐证块（source/changes/is_new）+ feature 级 match
+
+def build_protocol_block(match, drafts) -> dict
+def merge_into_db(db, vid_pid, protocol_block, note=None) -> dict
+    # 新设备创建条目(source=learning-mode, verified=False)；
+    # 已有 protocol 按 feature id 合并（同 id 覆盖），不动 name、不降级 verified=True
+```
+
+## 15. 引擎/协议库配套扩展
+
+- `ReportIO.read_until(checks, params, timeout_ms)`：只读轮询（call_multi 复用）
+- `execute_feature` 支持 `report="input"` 监听型（零写入）
+- schema: `_VALID_REPORTS += "input"`；feature 可选 `match`（多接口设备按功能选接口，
+  GUI/exec 调用方解析目标接口时 feature.match 优先于 transport.match）
+- `validate_db(db)` 公开；`save_db(db, path)` 校验 + 原子写回（tmp + os.replace）
+
+## 16. GUI 学习模式标签页（任务 4.4）
+
+- 主窗口改为 QTabWidget：设备页 + 学习模式页
+- 学习页流程：勾选 vendor/rawhid 接口 → 开始录制 → 标记起点 →
+  （用户去官方软件改设置）→ 停止并分析（diff 起点 ts 前后两组）→
+  填说明 → 生成草稿入库（unverified）
+- 入库后自动 reload db + 刷新设备页（新功能按钮立即可见）
+- 关窗时自动停录

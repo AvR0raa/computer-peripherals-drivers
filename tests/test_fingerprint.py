@@ -11,6 +11,8 @@ from core.fingerprint import (
     ProtocolDBError,
     fingerprint,
     load_db,
+    save_db,
+    validate_db,
 )
 
 
@@ -130,7 +132,7 @@ def test_v2_valid_protocol_loads(tmp_path):
     (lambda f: f.update(template=[999]), "template"),
     (lambda f: f.update(template=["{1bad}"]), "template"),
     (lambda f: f.update(kind="write"), "read_from"),
-    (lambda f: f.update(report="input"), "report"),
+    (lambda f: f.update(report="serial"), "report"),   # input 已合法，换一个非法值
     (lambda f: f["params"].update(x={"type": "string"}), "params"),
 ])
 def test_v2_invalid_features_rejected(tmp_path, mutate, fragment):
@@ -164,6 +166,61 @@ def test_real_db_v2_loads():
     db = load_db(DEFAULT_DB_PATH)
     protocol = db["devices"]["046D:C54D"]["protocol"]
     assert protocol["features"][0]["id"] == "ping"
+
+
+# ---------------------------------------------------------------------------
+# save_db / input 监听型 / feature 级 match（M4.3）
+# ---------------------------------------------------------------------------
+
+def test_save_db_roundtrip(tmp_path):
+    path = tmp_path / "db.json"
+    db = {"$schema": "protocol-db/v2", "brands": {"046D": {"name": "Logitech"}},
+          "devices": {}}
+    save_db(db, path)
+    loaded = load_db(path)
+    assert loaded["brands"]["046D"]["name"] == "Logitech"
+    assert not (tmp_path / "db.json.tmp").exists()   # 原子替换后无残留
+
+
+def test_save_db_rejects_invalid(tmp_path):
+    path = tmp_path / "db.json"
+    with pytest.raises(ProtocolDBError):
+        save_db({"$schema": "bad", "brands": {}, "devices": {}}, path)
+    assert not path.exists()                          # 校验失败不落盘
+
+
+def test_input_report_accepted(tmp_path):
+    path = tmp_path / "db.json"
+    db = {"$schema": "protocol-db/v2", "brands": {}, "devices": {
+        "291D:385D": {"protocol": {
+            "name": "learned",
+            "transport": {"match": {"usage_page": "FF21", "usage": "0001"}},
+            "features": [{
+                "id": "learned_x", "label": "监听", "kind": "read",
+                "report": "input", "template": [],
+                "response": {"min_len": 4, "check": [None] * 4},
+            }],
+        }}}}
+    save_db(db, path)                                 # 不抛即通过
+    assert load_db(path)["devices"]["291D:385D"]["protocol"]["features"][0]["report"] == "input"
+
+
+def test_feature_level_match_validated(tmp_path):
+    import copy
+    protocol = copy.deepcopy(VALID_PROTOCOL)
+    protocol["features"][0]["match"] = {"usage_page": "XYZ", "usage": "0001"}
+    path = _write_db(tmp_path, {"046D:C54D": {"protocol": protocol}})
+    with pytest.raises(ProtocolDBError, match="match"):
+        load_db(path)
+
+
+def test_feature_level_match_ok(tmp_path):
+    import copy
+    protocol = copy.deepcopy(VALID_PROTOCOL)
+    protocol["features"][0]["match"] = {"usage_page": "FF21", "usage": "0001"}
+    path = _write_db(tmp_path, {"046D:C54D": {"protocol": protocol}})
+    db = load_db(path)
+    assert db["devices"]["046D:C54D"]["protocol"]["features"][0]["match"]["usage_page"] == "FF21"
 
 
 # ---------------------------------------------------------------------------

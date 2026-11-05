@@ -258,3 +258,37 @@ def test_call_multi_branch_order(install):
     with io:
         result = io.call_multi(b"\x00", checks, {}, 200)
     assert result == (bytes([0x10, 0xFF, 0x00, 0x10, 0x00, 0x00, 0x42]), "a")
+
+
+# ---------------------------------------------------------------------------
+# read_until / 监听型 execute_feature（M4.3 学习模式产出）
+# ---------------------------------------------------------------------------
+
+def test_read_until_hits_without_write(install):
+    dev = install(responses=[[0xED, 1, 0x40]])
+    io = ReportIO(path=b"fake")
+    with io:
+        result = io.read_until([("hit", [0xED])], {}, 300)
+    assert result == (bytes([0xED, 1, 0x40]), "hit")
+    assert dev.written == []                     # 零写入
+
+
+def test_read_until_timeout(install):
+    install(responses=[])
+    io = ReportIO(path=b"fake")
+    with io:
+        assert io.read_until([("x", [0xFF])], {}, 80) is None
+
+
+def test_execute_feature_input_listen_only(install):
+    dev = install(responses=[[0xED, 1, 0x40, 0x00]])
+    feature = {
+        "id": "learned_dpi", "kind": "read", "report": "input",
+        "template": [],
+        "response": {"min_len": 4, "check": [0xED], "extract": {"value": 2}},
+    }
+    io = ReportIO(path=b"fake")
+    result = execute_feature(io, feature, {}, timeout_ms=300)
+    assert result.ok and result.branch is None
+    assert result.decoded == {"value": 0x40}
+    assert dev.written == []                     # 全程零写入

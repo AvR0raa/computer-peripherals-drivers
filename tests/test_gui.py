@@ -1,18 +1,18 @@
-"""M3 GUI 冒烟测试：离屏模式构建窗口、列表分组、详情联动、热插拔信号。
-
-枚举 monkeypatch 隔离；不执行真实设备写操作。
-"""
+"""M3 + M4.4 GUI 测试：离屏模式（枚举/录制/入库全部 monkeypatch 隔离）。"""
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
+import core.report_io as rio
 import core.device_manager as dm
 import gui as gui_mod
 from core.device_manager import DeviceEvent
 from tests.test_device_manager import fake_raw
+from tests.test_report_io import FakeDev
 
 
 @pytest.fixture(scope="module")
@@ -96,3 +96,74 @@ def test_descriptor_button_flow(window, qapp, monkeypatch):
         qapp.processEvents()                      # 处理跨线程 queued 信号
     text = window._desc_output.toPlainText()
     assert "顶层集合" in text or "读取失败" in text
+
+
+# ---------------------------------------------------------------------------
+# 学习模式页（M4.4）
+# ---------------------------------------------------------------------------
+
+def _find_learn_item(window, usage_page):
+    for i in range(window._learn_targets.count()):
+        item = window._learn_targets.item(i)
+        if item.data(Qt.UserRole)["usage_page"] == usage_page:
+            return item
+    return None
+
+
+def test_learn_tab_lists_vendor_interfaces(window):
+    # window fixture: FF21(vendor) + 000C(consumer, 不算) + 标准(不算)
+    assert window._learn_targets.count() == 1
+    item = window._learn_targets.item(0)
+    assert item.data(Qt.UserRole)["vidpid"] == "291D:385D"
+    assert "UPFF21" in item.text()
+
+
+def test_learn_start_without_selection(window):
+    window._on_learn_start()
+    assert "没有勾选" in window._learn_status.text()
+    assert window._learn_recorder is None
+
+
+def test_learn_full_flow(window, qapp, monkeypatch):
+    """录制 → 停止分析 → 入库：全程假设备 + 假写盘。"""
+    monkeypatch.setattr(rio, "_open_device",
+                        lambda path: FakeDev(responses=[[0xED, 1, 0x40]]))
+    monkeypatch.setattr(gui_mod.MainWindow, "_read_descriptor",
+                        staticmethod(lambda path: None))     # 不解析描述符
+    captured: dict = {}
+    monkeypatch.setattr(gui_mod, "save_db",
+                        lambda db, path: captured.setdefault("db", db))
+
+    item = _find_learn_item(window, 0xFF21)
+    assert item is not None
+    item.setCheckState(Qt.Checked)
+    window._on_learn_start()
+    assert window._learn_recorder is not None
+
+    deadline = __import__("time").time() + 3.0
+    while __import__("time").time() < deadline:
+        if window._learn_recorder.entries():
+            break
+        qapp.processEvents()
+        __import__("time").sleep(0.02)
+
+    window._on_learn_stop()                       # 未标记起点 → 全部按新报文
+    assert "新报文组" in window._learn_output.toPlainText()
+    assert window._learn_commit_btn.isEnabled()
+
+    window._learn_note.setText("DPI 800→1600")
+    window._on_learn_commit()
+    assert "db" in captured, "save_db 应被调用"
+    entry = captured["db"]["devices"]["291D:385D"]
+    assert entry["source"] == "learning-mode"
+    assert entry["verified"] is False
+    features = entry["protocol"]["features"]
+    assert features and features[0]["id"].startswith("learned_")
+    assert features[0]["report"] == "input"       # 监听型零写入
+    assert "已入库" in window._learn_status.text()
+
+
+def test_learn_commit_empty_diff_guard(window):
+    window._learn_diffs = []
+    window._on_learn_commit()                     # 不应崩溃、不应入库
+    assert window._learn_status.text() == "空闲" or "没有" in window._learn_status.text()

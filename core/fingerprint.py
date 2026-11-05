@@ -25,7 +25,7 @@ _PLACEHOLDER_RE = re.compile(r"^\{[A-Za-z_]\w*\}$")
 _COMPUTED_RE = re.compile(r"^\{#([a-z_]+)\}$")
 _COMPUTED_ALGOS = {"negsum"}
 _VALID_KINDS = {"command", "read", "write"}
-_VALID_REPORTS = {"output", "feature"}
+_VALID_REPORTS = {"output", "feature", "input"}   # input = 监听型（零写入）
 
 
 def _is_byte(value) -> bool:
@@ -52,10 +52,7 @@ def _validate_protocol(vid_pid: str, protocol) -> None:
     match = transport.get("match")
     if not isinstance(match, dict):
         raise ProtocolDBError(f"{where}.transport.match: 必须是 object")
-    for key in ("usage_page", "usage"):
-        value = match.get(key, "")
-        if not (isinstance(value, str) and re.fullmatch(r"[0-9A-Fa-f]{4}", value)):
-            raise ProtocolDBError(f"{where}.transport.match.{key}: 须为 4 位十六进制字符串")
+    _validate_match(f"{where}.transport.match", match)
 
     for index, feature in enumerate(features):
         fwhere = f"{where}.features[{index}]({feature.get('id', '?') if isinstance(feature, dict) else '?'})"
@@ -84,9 +81,18 @@ def _validate_protocol(vid_pid: str, protocol) -> None:
                     f"{fwhere}.template: 元素须为 0-255 整数、{{参数}} 或 {{#算法}} 占位符，收到 {element!r}")
         if feature["kind"] == "write" and not feature.get("read_from"):
             raise ProtocolDBError(f"{fwhere}: kind=write 必须提供 read_from（读回验证用）")
+        if "match" in feature:            # feature 级接口覆盖（多接口设备）
+            _validate_match(f"{fwhere}.match", feature["match"])
         _validate_params(fwhere, feature.get("params"))
         if "response" in feature:
             _validate_response(fwhere, feature["response"])
+
+
+def _validate_match(where: str, match: dict) -> None:
+    for key in ("usage_page", "usage"):
+        value = match.get(key, "")
+        if not (isinstance(value, str) and re.fullmatch(r"[0-9A-Fa-f]{4}", value)):
+            raise ProtocolDBError(f"{where}.{key}: 须为 4 位十六进制字符串")
 
 
 def _validate_params(where: str, params) -> None:
@@ -145,15 +151,8 @@ class FingerprintResult:
     detail: str              # 一句话解释
 
 
-def load_db(path: Path = DEFAULT_DB_PATH) -> dict:
-    """读取并校验协议库。结构非法抛 ProtocolDBError。"""
-    if not path.is_file():
-        raise ProtocolDBError(f"协议库不存在: {path}")
-    try:
-        db = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ProtocolDBError(f"协议库 JSON 语法错误: {exc}") from exc
-
+def validate_db(db: dict) -> None:
+    """校验协议库整体结构，非法抛 ProtocolDBError。"""
     schema = db.get("$schema", "")
     if not schema.startswith("protocol-db/"):
         raise ProtocolDBError(f"不支持的 schema: {schema!r}")
@@ -167,7 +166,29 @@ def load_db(path: Path = DEFAULT_DB_PATH) -> dict:
         for vid_pid, entry in db["devices"].items():
             if isinstance(entry, dict) and "protocol" in entry:
                 _validate_protocol(vid_pid, entry["protocol"])
+
+
+def load_db(path: Path = DEFAULT_DB_PATH) -> dict:
+    """读取并校验协议库。结构非法抛 ProtocolDBError。"""
+    if not path.is_file():
+        raise ProtocolDBError(f"协议库不存在: {path}")
+    try:
+        db = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ProtocolDBError(f"协议库 JSON 语法错误: {exc}") from exc
+    validate_db(db)
     return db
+
+
+def save_db(db: dict, path: Path = DEFAULT_DB_PATH) -> None:
+    """校验后原子写回协议库（tmp + replace，写坏不伤原文件）。"""
+    validate_db(db)
+    path = Path(path)
+    text = json.dumps(db, ensure_ascii=False, indent=2) + "\n"
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    import os
+    os.replace(tmp, path)
 
 
 def _brand_info(db: dict, vid_hex: str) -> tuple[str | None, str | None, tuple[str, ...]]:
