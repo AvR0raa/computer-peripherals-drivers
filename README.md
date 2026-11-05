@@ -6,6 +6,19 @@
 
 本仓库旨在建立一个全面的电脑外设驱动资源库，涵盖主流品牌的各类外设产品驱动，方便用户快速查找和获取所需驱动程序。
 
+## 🔧 All-in-One 外设调试工具（进行中）
+
+除驱动归档外，本仓库同时开发一个开源外设调试与控制工具（详见 [plan.md](plan.md) / [ARCHITECTURE.md](ARCHITECTURE.md)）：
+
+```
+pip install -r requirements.txt
+python cli.py list                 # 列出全部 HID 设备 + 识别状态
+python cli.py info 291D:385D --desc   # 单设备详情 + 描述符解析
+python cli.py watch                # 热插拔监视
+```
+
+当前进度：**M1 设备识别器已完成**（枚举 / 描述符解析 / 指纹匹配，全部只读零风险）。
+
 ## 涵盖范围
 
 ### 外设类型
