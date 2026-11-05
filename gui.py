@@ -65,7 +65,7 @@ from core.profiles import (
     load_profile,
     save_profile,
 )
-from core.hidpp import HidppLink
+from core.hidpp import HidppLink, ensure_online
 from core.recorder import Recorder, RecorderTarget
 from core.report_io import ReportIO, execute_feature
 from core.safe_write import safe_write
@@ -493,16 +493,19 @@ class MainWindow(QMainWindow):
 
         def on_read():
             dev = 0xFF if slot_spin.value() == 0 else slot_spin.value()
-            info.setText("读取中…（设备睡着时请动一动鼠标）")
+            info.setText("连接中…（设备睡眠时 HID++ 流量会唤醒它，请动一动鼠标）")
 
             def job():
                 link = build_link()
                 if link is None:
                     return None, "未找到 FF00 HID++ 接口"
                 with link:
-                    dpi, default = read_dpi(link, dev)
+                    version = ensure_online(link, dev, attempts=10)
+                    if version is None:
+                        return None, "设备不在线（请动一动鼠标再试）"
+                    dpi, dpi_y, lod, default = read_dpi(link, dev)
                     lst = get_dpi_list(link, dev)
-                return (dpi, default, lst), None
+                return (dpi, dpi_y, lod, default, lst), None
 
             worker = Worker(job, self)
 
@@ -515,12 +518,17 @@ class MainWindow(QMainWindow):
                 if err:
                     info.setText(err)
                     return
-                dpi, default, lst = result
+                dpi, dpi_y, lod, default, lst = result
                 if dpi is None:
                     info.setText("读取失败（设备可能睡眠中，动一动鼠标再试）")
                     return
                 range_text = f"档位 {lst[0]}-{lst[-1]}（{len(lst)} 档）" if lst else "档位表未知"
-                info.setText(f"当前 {dpi} DPI · 默认 {default or '?'} · {range_text}")
+                extra = ""
+                if dpi_y is not None:
+                    extra += f" · Y={dpi_y}"
+                if lod is not None:
+                    extra += f" · LOD={lod}"
+                info.setText(f"当前 {dpi} DPI{extra} · {range_text}")
                 if lst:
                     dpi_spin.setRange(lst[0], lst[-1])
                     dpi_slider.setRange(lst[0], lst[-1])
@@ -539,6 +547,8 @@ class MainWindow(QMainWindow):
                 if link is None:
                     return "未找到 FF00 HID++ 接口"
                 with link:
+                    if ensure_online(link, dev, attempts=6) is None:
+                        return "设备不在线（请动一动鼠标再试）"
                     outcome = set_dpi(link, dev, target)
                 return "\n".join(outcome.log)
 

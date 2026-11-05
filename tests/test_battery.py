@@ -4,20 +4,20 @@ import pytest
 import core.report_io as rio
 from core.battery import BatteryResult, find_battery_fields, read_standard_battery, scan_all
 from core.hidpp import (
-    SW_ID,
     FEATURE_UNIFIED_BATTERY,
     HidppBattery,
+    HidppLink,
     get_feature_index,
     ping,
     read_battery,
 )
 from core.report_io import ReportIO
+from tests.hidpp_scripted import HidppScript
 from tests.test_device_manager import fake_raw
 from tests.test_report_io import FakeDev
 from tests.test_safe_write import ScriptedDev
 
 DEV = 0xFF
-FEAT_LO = (0x10 << 4) | SW_ID          # unified battery funct1 reqLo = 0x15
 
 
 @pytest.fixture
@@ -28,49 +28,60 @@ def install(monkeypatch):
     return _install
 
 
-def resp(*body):
-    return list(body)
-
-
 # ---------------------------------------------------------------------------
 # hidpp.ping / get_feature_index
 # ---------------------------------------------------------------------------
 
 def test_ping_v2_reply(install):
-    install(FakeDev(responses=[resp(0x10, DEV, 0x00, 0x10 | SW_ID, 0x04, 0x05, 66)]))
+    script = HidppScript()
+    install(FakeDev(responses=[script.ping(DEV, 0x04, 0x05)]))
     io = ReportIO(path=b"x")
     state, version = ping(io, DEV)
     assert (state, version) == ("2.0", 4.5)
 
 
+def test_ping_v2_long_channel(install):
+    """双通道：长报文优先并命中（HidppLink，模拟 PRO X2 长报文专用设备）。"""
+    script = HidppScript()
+    install(FakeDev(responses=[script.ping(DEV, 0x04, 0x05, long=True)]))
+    io = HidppLink(None, b"long-only")
+    state, version = ping(io, DEV)
+    assert (state, version) == ("2.0", 4.5)
+
+
 def test_ping_hidpp10_error_reply(install):
-    install(FakeDev(responses=[resp(0x10, DEV, 0x8F, 0x00, 0x10, 0x01, 0x00)]))
+    script = HidppScript()
+    install(FakeDev(responses=[script.err(DEV, 0x01)]))
     io = ReportIO(path=b"x")
     assert ping(io, DEV) == ("1.0", 1.0)
 
 
 def test_ping_empty_slot(install):
-    install(FakeDev(responses=[resp(0x10, DEV, 0x8F, 0x00, 0x10, 0x08, 0x00)]))
+    script = HidppScript()
+    install(FakeDev(responses=[script.err(DEV, 0x08)]))
     io = ReportIO(path=b"x")
     assert ping(io, DEV) == ("empty-slot", None)
 
 
 def test_ping_timeout(install):
+    script = HidppScript()
     install(FakeDev(responses=[]))
     io = ReportIO(path=b"x")
     assert ping(io, DEV) == ("offline", None)
 
 
 def test_get_feature_index(install):
-    dev = install(FakeDev(responses=[resp(0x10, DEV, 0x00, SW_ID, 0x07, 0x00, 0x00)]))
+    script = HidppScript()
+    dev = install(FakeDev(responses=[script.gf(DEV, 0x07)]))
     io = ReportIO(path=b"x")
     assert get_feature_index(io, DEV, FEATURE_UNIFIED_BATTERY) == 0x07
-    # 请求线材: [0x10, dev, 0x00(root), swid, 0x10, 0x04, 0x00]
-    assert dev.written[0] == bytes([0x10, DEV, 0x00, SW_ID, 0x10, 0x04, 0x00])
+    wire = dev.written[0]
+    assert wire[0] == 0x10 and wire[2] == 0x00 and wire[4:6] == bytes([0x10, 0x04])
 
 
 def test_get_feature_index_unsupported(install):
-    install(FakeDev(responses=[resp(0x10, DEV, 0x00, SW_ID, 0x00, 0x00, 0x00)]))
+    script = HidppScript()
+    install(FakeDev(responses=[script.gf(DEV, 0)]))
     io = ReportIO(path=b"x")
     assert get_feature_index(io, DEV, FEATURE_UNIFIED_BATTERY) is None
 
@@ -81,9 +92,10 @@ def test_get_feature_index_unsupported(install):
 
 def test_read_battery_unified(install):
     # GetFeature(0x1004)→idx07, 调用 funct1 → [discharge=85, level=8, status=1]
+    script = HidppScript()
     install(FakeDev(responses=[
-        resp(0x10, DEV, 0x00, SW_ID, 0x07, 0, 0),
-        resp(0x10, DEV, 0x07, 0x15, 85, 8, 1),
+        script.gf(DEV, 0x07),
+        script.call(DEV, 0x07, 1, bytes([85, 8, 1])),
     ]))
     io = ReportIO(path=b"x")
     b = read_battery(io, DEV)
@@ -94,10 +106,11 @@ def test_read_battery_unified(install):
 
 def test_read_battery_status_fallback(install):
     # 0x1004 不支持(idx00)，0x1000 → idx03, funct0 → [level=60, next=70, status=0]
+    script = HidppScript()
     install(FakeDev(responses=[
-        resp(0x10, DEV, 0x00, SW_ID, 0x00, 0, 0),
-        resp(0x10, DEV, 0x00, SW_ID, 0x03, 0, 0),
-        resp(0x10, DEV, 0x03, SW_ID, 60, 70, 0),
+        script.gf(DEV, 0),
+        script.gf(DEV, 0x03),
+        script.call(DEV, 0x03, 0, bytes([60, 70, 0])),
     ]))
     io = ReportIO(path=b"x")
     b = read_battery(io, DEV)
@@ -106,11 +119,12 @@ def test_read_battery_status_fallback(install):
 
 def test_read_battery_voltage_fallback(install):
     # 三个查询 feature 都不支持，最后 0x1001 → idx05, funct0 → [0x0E, 0x2E, 0x80]
+    script = HidppScript()
     install(FakeDev(responses=[
-        resp(0x10, DEV, 0x00, SW_ID, 0x00, 0, 0),   # 0x1004 无
-        resp(0x10, DEV, 0x00, SW_ID, 0x00, 0, 0),   # 0x1000 无
-        resp(0x10, DEV, 0x00, SW_ID, 0x05, 0, 0),   # 0x1001 → 5
-        resp(0x10, DEV, 0x05, SW_ID, 0x0E, 0x2E, 0x80),
+        script.gf(DEV, 0),                                        # 0x1004 无
+        script.gf(DEV, 0),                                        # 0x1000 无
+        script.gf(DEV, 0x05),                                     # 0x1001 → 5
+        script.call(DEV, 0x05, 0, bytes([0x0E, 0x2E, 0x80])),
     ]))
     io = ReportIO(path=b"x")
     b = read_battery(io, DEV)
@@ -118,10 +132,11 @@ def test_read_battery_voltage_fallback(install):
 
 
 def test_read_battery_none_when_no_features(install):
+    script = HidppScript()
     install(FakeDev(responses=[
-        resp(0x10, DEV, 0x00, SW_ID, 0x00, 0, 0),
-        resp(0x10, DEV, 0x00, SW_ID, 0x00, 0, 0),
-        resp(0x10, DEV, 0x00, SW_ID, 0x00, 0, 0),
+        script.gf(DEV, 0),
+        script.gf(DEV, 0),
+        script.gf(DEV, 0),
     ]))
     io = ReportIO(path=b"x")
     assert read_battery(io, DEV) is None
@@ -174,19 +189,16 @@ def test_scan_all_standard_route(install, monkeypatch):
     assert r.display == "73%"
 
 
-def test_scan_all_hidpp_receiver_route(install, monkeypatch):
-    # 接收器 FF00:0001；槽位1 ping→1.0(0x01)；槽位2 ping→2.0；GetFeature→idx07；unified→55%
-    install(FakeDev(responses=[
-        resp(0x10, 0x01, 0x8F, 0x00, 0x10, 0x01, 0x00),      # slot1 ping err(1.0设备) → read_battery? no: state 1.0 → read_battery(1)... 见下
-    ]))
-    # 说明: _scan_hidpp 对每个槽位先 ping，1.0 设备也会走 read_battery（会失败→None）
-    # 这里只测无电量结果路径
+def test_scan_all_hidpp_receiver_route(install):
+    # 槽位1 应答 1.0(err 0x01) 但无电量 feature → 在线但 source=none
+    script = HidppScript()
+    install(FakeDev(responses=[script.err(0x01, 0x01)]))
     grouped = {"046D:C54D": [_mk("046D:C54D", usage_page=0xFF00, usage=0x0001, product="USB Receiver")]}
     results = scan_all(grouped, lambda path: b"")
     r = results[0]
     assert r.vidpid == "046D:C54D"
-    assert r.source in ("none",)
-    assert "罗技" in r.detail or "HID++" in r.detail
+    assert r.source == "none"
+    assert "HID++" in r.detail
 
 
 def test_battery_result_display():

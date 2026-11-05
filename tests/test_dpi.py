@@ -1,11 +1,9 @@
-"""M2.5b 单元测试：core/dpi.py（假设备脚本化 HID++ 应答，离线）。
-
-脚本约定: feature 查询序列按 GetFeature→业务调用的顺序回放。
-"""
+"""M2.5b 单元测试：core/dpi.py（脚本化 HID++ 应答，sw_id 对齐，离线）。"""
 import pytest
 
 from core.dpi import DpiOutcome, get_dpi_list, read_dpi, set_dpi
 from core.report_io import ReportIO
+from tests.hidpp_scripted import HidppScript
 from tests.test_report_io import FakeDev
 
 DEV = 1
@@ -21,7 +19,7 @@ def install(monkeypatch):
 
 
 def dpi_list_payload(values, page=0):
-    """构造 GetSensorDpiList 应答 payload: [X] + BE16 序列 + 0x0000 结尾。"""
+    """GetSensorDpiList 应答 payload: [X] + BE16 序列 + 0x0000 结尾。"""
     body = bytes([page])
     for v in values:
         body += bytes([(v >> 8) & 0xFF, v & 0xFF])
@@ -30,13 +28,15 @@ def dpi_list_payload(values, page=0):
 
 
 def test_get_dpi_list_plain_values(install):
+    script = HidppScript()
     dev = install(FakeDev(responses=[
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],                    # GetFeature(0x2201) → 8
-        [0x11, DEV, IDX, 0x15] + list(dpi_list_payload([100, 200, 400])),
+        script.gf(DEV, IDX),
+        script.call(DEV, IDX, 1, dpi_list_payload([100, 200, 400]), long=True),
     ]))
     link = ReportIO(path=b"x")
     assert get_dpi_list(link, DEV) == [100, 200, 400]
-    assert dev.written[1][:4] == bytes([0x11, DEV, IDX, 0x15])   # 长报文请求
+    assert dev.written[1][0] == 0x11                             # 长报文请求
+    assert (dev.written[1][3] >> 4) == 1                         # funct 1
 
 
 def test_get_dpi_list_step_encoding(install):
@@ -44,9 +44,10 @@ def test_get_dpi_list_step_encoding(install):
     step_val = 0xE000 | 50
     payload = bytes([0]) + bytes([0x01, 0x90]) + \
         bytes([(step_val >> 8) & 0xFF, step_val & 0xFF]) + bytes([0x03, 0x20]) + b"\x00\x00"
+    script = HidppScript()
     install(FakeDev(responses=[
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],
-        [0x11, DEV, IDX, 0x15] + list(payload.ljust(16, b"\x00")),
+        script.gf(DEV, IDX),
+        script.call(DEV, IDX, 1, payload.ljust(16, b"\x00"), long=True),
     ]))
     link = ReportIO(path=b"x")
     result = get_dpi_list(link, DEV)
@@ -55,73 +56,119 @@ def test_get_dpi_list_step_encoding(install):
 
 
 def test_get_dpi_list_unsupported(install):
-    install(FakeDev(responses=[[0x10, DEV, 0x00, 0x05, 0x00, 0, 0]]))
+    script = HidppScript()
+    install(FakeDev(responses=[script.gf(DEV, 0)]))
     link = ReportIO(path=b"x")
     assert get_dpi_list(link, DEV) == []
 
 
 def test_read_dpi_short_reply(install):
+    script = HidppScript()
     install(FakeDev(responses=[
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],
-        [0x10, DEV, IDX, 0x25, 0x00, 0x03, 0x20],              # payload [X, 03, 20] = 800
+        script.gf(DEV, IDX),
+        script.call(DEV, IDX, 2, bytes([0x00, 0x03, 0x20])),      # [X, 03, 20] = 800
     ]))
     link = ReportIO(path=b"x")
-    dpi, default = read_dpi(link, DEV)
-    assert dpi == 800 and default is None
+    dpi, dpi_y, lod, default = read_dpi(link, DEV)
+    assert dpi == 800 and dpi_y is None and lod is None and default is None
 
 
 def test_read_dpi_long_reply_with_default(install):
     # 短请求、长应答: payload [X, hi, lo, defHi, defLo, ...]
+    script = HidppScript()
     install(FakeDev(responses=[
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],
-        [0x11, DEV, IDX, 0x25, 0x00, 0x03, 0x20, 0x01, 0x2C] + [0] * 11,
+        script.gf(DEV, IDX),
+        script.call(DEV, IDX, 2, bytes([0x00, 0x03, 0x20, 0x01, 0x2C]), long=True),
     ]))
     link = ReportIO(path=b"x")
-    dpi, default = read_dpi(link, DEV)
+    dpi, _y, _l, default = read_dpi(link, DEV)
     assert dpi == 800 and default == 300
 
 
 def test_read_dpi_zero_falls_back_to_default(install):
+    script = HidppScript()
     install(FakeDev(responses=[
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],
-        [0x11, DEV, IDX, 0x25, 0x00, 0x00, 0x00, 0x01, 0x2C] + [0] * 11,
+        script.gf(DEV, IDX),
+        script.call(DEV, IDX, 2, bytes([0x00, 0x00, 0x00, 0x01, 0x2C]), long=True),
     ]))
     link = ReportIO(path=b"x")
-    dpi, _ = read_dpi(link, DEV)
-    assert dpi == 300                                          # 0 → 默认值
+    dpi, _y, _l, _d = read_dpi(link, DEV)
+    assert dpi == 300                                            # 0 → 默认值
 
+
+# ---------------------------------------------------------------------------
+# 0x2202 Extended Adjustable DPI（PRO X2 等新款，Solaar #2207）
+# ---------------------------------------------------------------------------
+
+def test_read_dpi_extended_feature(install):
+    # 0x2201 不支持 → 0x2202 分配 idx 9，能力 byte2 bit0=Y bit1=LOD
+    script = HidppScript()
+    install(FakeDev(responses=[
+        script.gf(DEV, 0),                                        # 0x2201 无
+        script.gf(DEV, 0x09),                                     # 0x2202 → 9
+        script.call(DEV, 0x09, 1, bytes([0x00, 0x00, 0x03])),     # GetInfo: Y=1 LOD=1
+        script.call(DEV, 0x09, 5, bytes([0x00, 0x0B, 0xB8, 0x00, 0x00,
+                                        0x0B, 0xB8, 0x00, 0x00, 0x02]), long=True),
+    ]))
+    link = ReportIO(path=b"x")
+    dpi, dpi_y, lod, _d = read_dpi(link, DEV)
+    assert dpi == 3000 and dpi_y == 3000 and lod == 2
+
+
+def test_get_dpi_list_extended(install):
+    step_val = 0xE000 | 50
+    payload = bytes([0, 0, 0]) + bytes([0x01, 0x90]) + \
+        bytes([(step_val >> 8) & 0xFF, step_val & 0xFF]) + bytes([0x03, 0x20]) + b"\x00\x00"
+    script = HidppScript()
+    install(FakeDev(responses=[
+        script.gf(DEV, 0),                                        # 0x2201 无
+        script.gf(DEV, 0x09),                                     # 0x2202 → 9
+        script.call(DEV, 0x09, 1, bytes([0x00, 0x00, 0x00])),     # GetInfo
+        script.call(DEV, 0x09, 2, payload.ljust(16, b"\x00"), long=True),
+    ]))
+    link = ReportIO(path=b"x")
+    result = get_dpi_list(link, DEV)
+    assert result == list(range(400, 801, 50))
+
+
+# ---------------------------------------------------------------------------
+# set_dpi 安全写
+# ---------------------------------------------------------------------------
 
 def test_set_dpi_success(install):
-    # set_dpi 内部多次 get_feature_index: GF, (读旧: GF+read), SET, (读回: GF+read)
+    # set_dpi: detect(GF) → read(detect GF + read) → set → read(detect GF + read)
+    script = HidppScript()
     dev = install(FakeDev(responses=[
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],                    # get_feature_index
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],                    # read_dpi 内 GF
-        [0x10, DEV, IDX, 0x25, 0x00, 0x03, 0x20],              # 读旧 800
-        [0x10, DEV, IDX, 0x35, 0x00, 0x06, 0x40],              # SetSensorDpi ACK
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],                    # 读回内 GF
-        [0x10, DEV, IDX, 0x25, 0x00, 0x06, 0x40],              # 读回 1600
+        script.gf(DEV, IDX),
+        script.gf(DEV, IDX),
+        script.call(DEV, IDX, 2, bytes([0x00, 0x03, 0x20])),      # 读旧 800
+        script.call(DEV, IDX, 3, bytes([0x00, 0x06, 0x40])),      # SetSensorDpi ACK
+        script.gf(DEV, IDX),
+        script.call(DEV, IDX, 2, bytes([0x00, 0x06, 0x40])),      # 读回 1600
     ]))
     link = ReportIO(path=b"x")
     out = set_dpi(link, DEV, 1600)
     assert out.ok and out.wrote == 1600 and out.old == 800
     assert out.readback == 1600 and not out.rolled_back
-    # 写入线材: [0x10, dev, idx, 0x35, 0x00, 0x06, 0x40]
-    assert dev.written[3] == bytes([0x10, DEV, IDX, 0x35, 0x00, 0x06, 0x40])
+    assert out.feature == "0x2201"
+    set_wire = dev.written[3]
+    assert set_wire[0] == 0x10 and set_wire[2] == IDX
+    assert (set_wire[3] >> 4) == 3                               # funct 3
+    assert set_wire[4:7] == bytes([0x00, 0x06, 0x40])            # [0, 1600hi, 1600lo]
 
 
 def test_set_dpi_verify_fail_rollback(install):
-    # 读旧 800 → 写 1600 → 读回仍 800 → 回滚 → 读回 800
-    install(FakeDev(responses=[
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],
-        [0x10, DEV, IDX, 0x25, 0x00, 0x03, 0x20],              # 读旧 800
-        [0x10, DEV, IDX, 0x35, 0x00, 0x06, 0x40],              # 写 1600
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],
-        [0x10, DEV, IDX, 0x25, 0x00, 0x03, 0x20],              # 读回=旧值 → 验证失败
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],                    # 回滚读回内 GF
-        [0x10, DEV, IDX, 0x35, 0x00, 0x03, 0x20],              # 回滚写
-        [0x10, DEV, 0x00, 0x05, IDX, 0, 0],                    # 回滚读回内 GF
-        [0x10, DEV, IDX, 0x25, 0x00, 0x03, 0x20],              # 读回 800
+    script = HidppScript()
+    dev = install(FakeDev(responses=[
+        script.gf(DEV, IDX),
+        script.gf(DEV, IDX),
+        script.call(DEV, IDX, 2, bytes([0x00, 0x03, 0x20])),      # 读旧 800
+        script.call(DEV, IDX, 3, bytes([0x00, 0x06, 0x40])),      # 写 1600
+        script.gf(DEV, IDX),
+        script.call(DEV, IDX, 2, bytes([0x00, 0x03, 0x20])),      # 读回=旧值 → 失败
+        script.call(DEV, IDX, 3, bytes([0x00, 0x03, 0x20])),      # 回滚写
+        script.gf(DEV, IDX),
+        script.call(DEV, IDX, 2, bytes([0x00, 0x03, 0x20])),      # 读回 800
     ]))
     link = ReportIO(path=b"x")
     out = set_dpi(link, DEV, 1600)
@@ -135,3 +182,12 @@ def test_set_dpi_rejects_out_of_range(install):
     out = set_dpi(link, DEV, 99999)
     assert not out.ok and out.wrote is None
     assert "超出安全范围" in out.log[0]
+
+
+def test_set_dpi_no_feature(install):
+    script = HidppScript()
+    install(FakeDev(responses=[script.gf(DEV, 0), script.gf(DEV, 0)]))
+    link = ReportIO(path=b"x")
+    out = set_dpi(link, DEV, 1600)
+    assert not out.ok
+    assert "0x2201/0x2202" in out.log[0]

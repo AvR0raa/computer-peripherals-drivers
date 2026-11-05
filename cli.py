@@ -21,6 +21,8 @@ if hasattr(sys.stdout, "reconfigure"):
 import core.device_manager as dm
 from core.battery import scan_all
 from core.descriptor import parse_report_descriptor, summary
+from core.hidpp import HidppLink, ensure_online, read_battery
+from core.dpi import get_dpi_list, read_dpi
 from core.fingerprint import (
     DEFAULT_DB_PATH,
     DeviceStatus,
@@ -195,6 +197,53 @@ def cmd_battery(args) -> int:
     return 0
 
 
+def cmd_mouse(args) -> int:
+    """罗技鼠标完整报告：唤醒 → 协议/DPI/电量（20 秒唤醒窗口）。"""
+    import time
+    ifaces = [d for d in dm.list_devices()
+              if d.vid_hex == "046D" and d.pid_hex == "C54D"]
+    short = next((d for d in ifaces if d.usage == 0x0001), None)
+    long_if = next((d for d in ifaces if d.usage == 0x0002), None)
+    if short is None and long_if is None:
+        print("未找到 C54D 接收器", file=sys.stderr)
+        return 1
+    link = HidppLink(short.path if short else None, long_if.path if long_if else None)
+    dev = args.slot if args.slot else 0xFF
+    print(f"连接接收器（槽位 {dev if dev != 0xFF else '0xFF/直连'}）…")
+    print(">>> 请反复移动并点击鼠标（约 12 秒唤醒窗口）<<<")
+    with link:
+        version = ensure_online(link, dev, attempts=10, interval=1.2)
+        if version is None:
+            print("设备不在线。确认: ①鼠标开着 ②已配对到该接收器 ③正在动鼠标")
+            return 1
+        print(f"✅ 在线，HID++ {version}")
+        dpi, dpi_y, lod, default = read_dpi(link, dev)
+        if dpi is not None:
+            print(f"DPI: {dpi}" + (f"  Y轴: {dpi_y}" if dpi_y else "")
+                  + (f"  LOD: {lod}" if lod is not None else "")
+                  + (f"  默认: {default}" if default else ""))
+        else:
+            print("DPI: 读取失败（0x2201/0x2202 均无响应）")
+        lst = get_dpi_list(link, dev)
+        if lst:
+            print(f"档位表: {len(lst)} 档，{lst[0]} - {lst[-1]}"
+                  + ("（板载配置档开启时写入可能不生效，需在 G HUB 切 Host 模式）" if args.set is None else ""))
+        b = read_battery(link, dev)
+        if b:
+            print(f"电量: {b.percent if b.percent is not None else b.display} "
+                  f"{'充电中' if b.charging else ''} ({b.source})")
+        else:
+            print("电量: 无电量 feature")
+        if args.set is not None:
+            from core.dpi import set_dpi
+            print(f"\n设置 DPI → {args.set}（带读回验证+回滚）…")
+            outcome = set_dpi(link, dev, args.set)
+            for line in outcome.log:
+                print("  " + line)
+            return 0 if outcome.ok else 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cli.py", description="M1 设备识别器：枚举/识别/监视 HID 外设（只读）"
@@ -212,6 +261,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_watch.add_argument("--interval", type=float, default=1.0, help="轮询秒数")
 
     sub.add_parser("battery", help="全部设备电量扫描")
+
+    p_mouse = sub.add_parser("mouse", help="罗技鼠标报告（唤醒/DPI/电量）+ 可选设置 DPI")
+    p_mouse.add_argument("--slot", type=int, default=1, help="接收器槽位 1-7（0=直连 0xFF）")
+    p_mouse.add_argument("--set", type=int, default=None, help="设置 DPI 到指定值（可选）")
     return parser
 
 
@@ -219,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return {"list": cmd_list, "info": cmd_info, "watch": cmd_watch,
-                "battery": cmd_battery}[args.command](args)
+                "battery": cmd_battery, "mouse": cmd_mouse}[args.command](args)
     except dm.HIDError as exc:
         print(f"HID 错误: {exc}", file=sys.stderr)
         return 1

@@ -16,13 +16,25 @@ from dataclasses import dataclass
 
 from core.report_io import ReportIO, ReportError, match_response
 
-SW_ID = 5    # 软件标识 1-7（Solaar 轮换；固定 5 即可，用于区分设备主动通知）
+SW_ID = 5    # 兼容常量保留；实际 sw_id 每请求轮换（见 _next_sw_id）
+
+_sw_state = {"n": 0}
+
+
+def _next_sw_id() -> int:
+    """每请求轮换 sw_id(1-7)：应答回显 funct|sw_id，轮换让匹配无歧义。
+
+    （实测 C54D+PRO X2：固定 sw_id 时前一个慢应答会被误配给下一个请求）
+    """
+    _sw_state["n"] = (_sw_state["n"] % 7) + 1
+    return _sw_state["n"]
 
 FEATURE_ROOT = 0x0000
 FEATURE_BATTERY_STATUS = 0x1000
 FEATURE_BATTERY_VOLTAGE = 0x1001
 FEATURE_UNIFIED_BATTERY = 0x1004
 FEATURE_ADJUSTABLE_DPI = 0x2201
+FEATURE_EXTENDED_ADJUSTABLE_DPI = 0x2202
 
 # BatteryStatus 语义（Solaar hidpp20_constants.BatteryStatus 子集）
 STATUS_NAMES = {0: "放电中", 1: "充电中", 2: "接近充满", 4: "已充满", 5: "电量不足(?)"}
@@ -108,7 +120,7 @@ def _call_feature(
     long=None 时按参数长度自动选择（>3 字节走长报文）。
     错误应答（0x8F）或超时返回 None。
     """
-    req_lo = ((funct & 0x0F) << 4) | SW_ID
+    req_lo = ((funct & 0x0F) << 4) | _next_sw_id()
     if long is None:
         long = len(params) > 3
     if long:
@@ -152,10 +164,11 @@ def ping(link, dev: int, mark: int = 66, timeout_ms: int = 500) -> tuple[str, fl
     seen_err: int | None = None
     for long in attempts:
         rid = 0x11 if long else 0x10
-        wire = bytes([rid, dev, 0x00, 0x10 | SW_ID, 0, 0, mark]).ljust(
+        sw = _next_sw_id()
+        wire = bytes([rid, dev, 0x00, 0x10 | sw, 0, 0, mark]).ljust(
             20 if long else 7, b"\x00")
         checks = [
-            ("2.0", [rid, dev, 0x00, 0x10 | SW_ID, None, None]),
+            ("2.0", [rid, dev, 0x00, 0x10 | sw, None, None]),
             ("err", [rid, dev, 0x8F]),
         ]
         result = link.call_multi(wire, checks, {}, timeout_ms)
@@ -169,6 +182,21 @@ def ping(link, dev: int, mark: int = 66, timeout_ms: int = 500) -> tuple[str, fl
             return "1.0", 1.0
         seen_err = error_code
     return ("empty-slot" if seen_err == 0x08 else "offline", None)
+
+
+def ensure_online(link, dev: int, attempts: int = 8, interval: float = 1.2,
+                  timeout_ms: int = 600) -> float | None:
+    """反复 ping 直到设备在线（HID++ 流量本身会唤醒睡眠设备，fwupd #7011 佐证）。
+
+    返回协议版本；全程不在线返回 None。
+    """
+    for _ in range(attempts):
+        state, version = ping(link, dev, timeout_ms=timeout_ms)
+        if state == "2.0":
+            return version
+        if attempts > 1:
+            _time.sleep(interval)
+    return None
 
 
 def read_battery(io: ReportIO, dev: int = 0xFF, timeout_ms: int = 500) -> HidppBattery | None:
