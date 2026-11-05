@@ -69,8 +69,8 @@
     "291D:385D": {
       "brand": "MCHOSE",
       "product": "MCHOSE V9 PRO",
-      "note": "游戏鼠标；接口0 复用 6 个 usage page，vendor 页 0xFF21(feature id=237,15字节)/0xFF22(feature id=170,63字节)/0xFF90/0xFF82，疑似配置通道",
-      "source": "hidapi-observed",
+      "note": "游戏耳机（头戴式，用户确认）。接口0 复用 6 个 usage page，vendor 页 0xFF21(feature id=237,15字节)/0xFF22(feature id=170,63字节)/0xFF90/0xFF82，疑似配置通道（音效/灯光/麦克风）",
+      "source": "hidapi-observed + 用户确认",
       "verified": false
     },
     "41E4:2116": {

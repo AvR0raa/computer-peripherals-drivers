@@ -233,10 +233,10 @@ def test_real_db_loads_and_matches():
     result = fingerprint(device(0x046D, 0xC54D), db)
     assert result.status is DeviceStatus.KNOWN
 
-    # MCHOSE V9 PRO（本机实测存在的游戏鼠标）
+    # MCHOSE V9 PRO（本机实测存在的游戏耳机，用户确认）
     result = fingerprint(device(0x291D, 0x385D), db)
     assert result.status is DeviceStatus.KNOWN
-    assert result.entry["note"].startswith("游戏鼠标")
+    assert result.entry["note"].startswith("游戏耳机")
 
 
 def test_real_db_known_pid_but_brand_sdk_wins_exact():

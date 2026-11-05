@@ -11,9 +11,9 @@
 
 | 设备 | 类型 | 官方驱动软件 | 我们的替代方案 |
 |---|---|---|---|
-| MCHOSE V9 PRO | 游戏鼠标 | MCHOSE 官方软件 | 直通引擎 + 学习模式逆向 |
+| MCHOSE V9 PRO | **游戏耳机**（头戴式） | MCHOSE 官方软件 | 直通引擎 + 学习模式逆向（音效/灯光/麦克风配置） |
 | MCHOSE Ace68-II | 磁轴键盘 | MCHOSE 官方软件 | 直通引擎 + 学习模式逆向 |
-| Logitech 接收器 (C54D/C232) | 鼠标/键盘接收器 | G HUB / LGS | HID++ 协议移植 + SDK 桥 |
+| Logitech 鼠标 + 接收器 (C54D/C232) | **鼠标（主力控制目标）** | G HUB / LGS | HID++ 协议移植 + SDK 桥 |
 | 前行者 attack shark | 键盘（待接入） | GearHub 网页端 | ROYUAN 协议移植 + 学习模式 |
 | 美嘉獅 MAGEGEE | 键盘（待接入） | （无公开 VID） | 插机实测 + 学习模式 |
 
