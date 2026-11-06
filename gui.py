@@ -71,6 +71,8 @@ from core.report_io import ReportIO, execute_feature
 from core.safe_write import safe_write
 from core.wizard import build_drafts, build_protocol_block, merge_into_db
 
+APP_VERSION = "v0.6.0"
+
 STATUS_COLOR = {
     DeviceStatus.KNOWN: QColor("#2ecc71"),
     DeviceStatus.SDK: QColor("#3498db"),
@@ -137,7 +139,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("外设调试工具 M3 — 计算机外设驱动合集")
+        self.setWindowTitle(f"外设万能调试器 {APP_VERSION} — 计算机外设驱动合集")
         self.resize(1080, 720)
 
         self.db = load_db(DEFAULT_DB_PATH)
@@ -581,6 +583,9 @@ class MainWindow(QMainWindow):
         battery_btn.clicked.connect(self._on_battery_all)
         head.addWidget(battery_btn)
         outer.addLayout(head)
+        outer.addWidget(QLabel(
+            "<small>快速上手：①「设备」页选中设备看详情/控制（罗技设备有 DPI 面板） "
+            "② 未知设备去「学习模式」页逆向 ③ 罗技鼠标也可用命令行 cli.py mouse</small>"))
         self._dash_host = QWidget()
         self._dash_grid = QGridLayout(self._dash_host)
         self._dash_grid.setSpacing(8)
