@@ -201,6 +201,33 @@ def test_scan_all_hidpp_receiver_route(install):
     assert "HID++" in r.detail
 
 
+def test_scan_all_receiver_self_reply_must_not_block_slots(install):
+    """回归：0xFF（接收器自身）应答但无电量时，必须继续扫槽位。
+
+    实测 bug：接收器 0xFF 应答 HID++ 1.0（无电量 feature）短路了槽位扫描，
+    导致配对在槽位 1 的 PRO X2 电量（92%）永远读不到。
+    """
+    script = HidppScript()
+    install(FakeDev(responses=[
+        script.err(0xFF, 0x01, long=True),          # 0xFF 长ping → 1.0（HidppLink 长优先）
+        script.gf(0xFF, 0),                         # 0x1004 无
+        script.gf(0xFF, 0),                         # 0x1000 无
+        script.gf(0xFF, 0),                         # 0x1001 无
+        script.ping(1, 4, 2, long=True),            # 槽位1 → HID++ 4.2（长报文）
+        script.gf(1, 0x07),                         # 0x1004 → idx7
+        script.call(1, 0x07, 1, bytes([92, 8, 0])), # 92%
+    ]))
+    grouped = {"046D:C54D": [
+        _mk("046D:C54D", usage_page=0xFF00, usage=0x0001, product="USB Receiver"),
+        _mk("046D:C54D", usage_page=0xFF00, usage=0x0002, product="USB Receiver"),
+    ]}
+    results = scan_all(grouped, lambda path: b"")
+    assert len(results) == 1
+    r = results[0]
+    assert r.percent == 92
+    assert "槽位 1" in r.detail
+
+
 def test_battery_result_display():
     assert BatteryResult("a", "p", percent=88).display == "88%"
     assert BatteryResult("a", "p", voltage_mv=3800).display == "3800mV"

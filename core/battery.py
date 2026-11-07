@@ -138,8 +138,17 @@ def scan_all(
     return results
 
 
+def _has_data(r: BatteryResult | None) -> bool:
+    """扫描结果是否带真实电量数据（没数据的不能短路后续扫描）。"""
+    return r is not None and (r.percent is not None or r.voltage_mv is not None)
+
+
 def _scan_hidpp(vidpid: str, ifaces: list) -> BatteryResult | None:
-    """罗技：短/长双通道（FF00:0001=短，FF00:0002=长），接收器槽位 ping + 直连 0xFF。"""
+    """罗技：短/长双通道（FF00:0001=短，FF00:0002=长），接收器槽位 ping + 直连 0xFF。
+
+    注意顺序：0xFF（接收器自身/直连设备）无电量时必须继续扫槽位 1-7 ——
+    接收器自己应答 HID++ 1.0 但没有电量 feature，不能短路。
+    """
     short = next((d for d in ifaces
                   if f"{d.usage_page:04X}" == "FF00" and f"{d.usage:04X}" == "0001"), None)
     long_if = next((d for d in ifaces
@@ -148,16 +157,22 @@ def _scan_hidpp(vidpid: str, ifaces: list) -> BatteryResult | None:
         return None
     link = HidppLink(short.path if short else None, long_if.path if long_if else None)
     with link:
-        # 直连设备先试 0xFF
+        # 1) 直连设备（0xFF）
         result = _hidpp_battery_for(link, 0xFF)
-        if result is not None:
+        if _has_data(result):
             return result
-        # 接收器槽位 1-7（长报文优先，新款设备如 PRO X2 只应答长报文）
+        # 2) 接收器槽位 1-7（长报文优先，新款设备如 PRO X2 只应答长报文）
+        fallback: BatteryResult | None = None
         for slot in range(1, 8):
             result = _hidpp_battery_for(link, slot)
-            if result is not None:
+            if _has_data(result):
                 result.detail = f"槽位 {slot}: {result.detail}"
                 return result
+            if result is not None and fallback is None:
+                fallback = result          # 在线但无电量：记下来兜底
+        if fallback is not None:
+            fallback.detail = f"槽位设备在线但无电量 feature — {fallback.detail}"
+            return fallback
     return None
 
 

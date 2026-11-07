@@ -34,7 +34,7 @@ class HidppScript:
         return list(wire.ljust(20 if long else 7, b"\x00"))
 
     def err(self, dev: int, error_code: int, long: bool = False) -> list:
-        """0x8F 错误应答。"""
+        """0x8F 错误应答（reqLo 回显 0x10|sw，与 ping 请求对齐）。"""
         rid = 0x11 if long else 0x10
-        wire = bytes([rid, dev, 0x8F, 0x00, 0x10, error_code, 0x00])
+        wire = bytes([rid, dev, 0x8F, 0x00, 0x10 | self._sw(), error_code, 0x00])
         return list(wire.ljust(20 if long else 7, b"\x00"))

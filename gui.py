@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -73,7 +74,7 @@ from core.report_io import ReportIO, execute_feature
 from core.safe_write import safe_write
 from core.wizard import build_drafts, build_protocol_block, merge_into_db
 
-APP_VERSION = "v0.6.1"
+APP_VERSION = "v0.6.2"
 
 STATUS_COLOR = {
     DeviceStatus.KNOWN: QColor("#2ecc71"),
@@ -140,22 +141,29 @@ class Worker(QThread):
 # ---------------------------------------------------------------------------
 
 STYLE_SHEET = """
-QMainWindow, QDialog { background: #F5F7FB; }
-#appTitle { font-size: 20px; font-weight: 700; color: #111827; }
-#appSubtitle { font-size: 12px; color: #6B7280; }
-#card { background: white; border: 1px solid #E5E7EB; border-radius: 14px; }
-#cardTitle { font-size: 15px; font-weight: 700; color: #111827; }
-#cardSub { font-size: 12px; color: #6B7280; }
-#batteryBig { font-size: 26px; font-weight: 800; color: #111827; }
-QPushButton { background: #2D7DD2; color: white; border: none;
-              border-radius: 8px; padding: 7px 14px; font-size: 13px; }
-QPushButton:hover { background: #2468B0; }
-QPushButton:disabled { background: #C3D4E8; }
-QPushButton#ghostBtn { background: #EEF2F7; color: #111827; }
-QPushButton#ghostBtn:hover { background: #DDE5EF; }
-QSlider::groove:horizontal { height: 6px; background: #E5E7EB; border-radius: 3px; }
-QSlider::handle:horizontal { width: 18px; margin: -7px 0; border-radius: 9px; background: #2D7DD2; }
-QSlider::sub-page:horizontal { background: #9EC1E8; border-radius: 3px; }
+QMainWindow, QDialog { background: #0D1117; }
+#appTitle { font-size: 22px; font-weight: 800; color: #F0F4FA; }
+#appSubtitle { font-size: 12px; color: #8A94A7; }
+#card { background: #161B27; border: 1px solid #232B3B; border-radius: 16px; }
+#card:hover { border: 1px solid #4F8CFF; }
+#cardTitle { font-size: 16px; font-weight: 700; color: #F0F4FA; }
+#cardSub { font-size: 12px; color: #8A94A7; }
+#batteryPct { font-size: 24px; font-weight: 800; }
+QProgressBar { background: #232B3B; border: none; border-radius: 4px; }
+QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #4F8CFF, stop:1 #6C5CE7);
+              color: white; border: none; border-radius: 9px; padding: 8px 16px;
+              font-size: 13px; font-weight: 600; }
+QPushButton:hover { background: #5B97FF; }
+QPushButton:disabled { background: #2A3547; color: #5A6579; }
+QPushButton#ghostBtn { background: #1C2333; color: #C9D2E3; border: 1px solid #2A3547; }
+QPushButton#ghostBtn:hover { background: #232B3B; }
+QSlider::groove:horizontal { height: 6px; background: #232B3B; border-radius: 3px; }
+QSlider::handle:horizontal { width: 18px; margin: -7px 0; border-radius: 9px; background: #4F8CFF; }
+QSlider::sub-page:horizontal { background: #4F8CFF66; border-radius: 3px; }
+QStatusBar { background: transparent; color: #8A94A7; }
+QScrollArea { background: transparent; }
+QScrollArea > QWidget > QWidget { background: transparent; }
+QToolTip { background: #1C2333; color: #F0F4FA; border: 1px solid #2A3547; }
 """
 
 _TYPE_ICONS = {"鼠标": "\U0001F5B1\uFE0F", "键盘": "\u2328\uFE0F", "耳机": "\U0001F3A7",
@@ -367,6 +375,7 @@ class MainWindow(QMainWindow):
         self._grid_host = QWidget()
         self._grid = QGridLayout(self._grid_host)
         self._grid.setSpacing(16)
+        self._grid.setContentsMargins(4, 4, 12, 12)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
@@ -415,19 +424,31 @@ class MainWindow(QMainWindow):
 
         card = QFrame()
         card.setObjectName("card")
-        card.setMinimumSize(270, 170)
-        card.setMaximumHeight(220)
+        card.setMinimumSize(280, 190)
+        card.setMaximumHeight(230)
         v = QVBoxLayout(card)
-        v.setContentsMargins(18, 14, 18, 14)
-        v.setSpacing(6)
+        v.setContentsMargins(18, 16, 18, 16)
+        v.setSpacing(8)
 
         head = QHBoxLayout()
         icon_label = QLabel(icon)
-        icon_label.setStyleSheet("font-size: 26px; border: none;")
+        icon_label.setStyleSheet(
+            "font-size: 26px; border: none; background: #1E2A3F;"
+            "border-radius: 12px; padding: 6px 10px;")
         name = QLabel(product[:20])
         name.setObjectName("cardTitle")
         head.addWidget(icon_label)
         head.addWidget(name, 1)
+        chip_text, chip_color = {
+            DeviceStatus.KNOWN: ("已识别 · 可控制", "#3DDC97"),
+            DeviceStatus.SDK: ("官方 SDK 可用", "#4F8CFF"),
+            DeviceStatus.UNKNOWN: ("未识别", "#8A94A7"),
+        }[result.status]
+        chip = QLabel(chip_text)
+        chip.setStyleSheet(
+            f"color:{chip_color}; background:{chip_color}22; border:none;"
+            "border-radius:9px; padding:3px 10px; font-size:11px; font-weight:600;")
+        head.addWidget(chip)
         v.addLayout(head)
 
         brand = result.brand_zh or result.brand or "未知品牌"
@@ -436,21 +457,36 @@ class MainWindow(QMainWindow):
         v.addWidget(sub)
 
         battery = self._battery_cache.get(key)
-        battery_label = QLabel()
-        battery_label.setObjectName("batteryBig")
-        if battery is not None and battery.percent is not None:
-            battery_label.setText(f"🔋 {battery.percent}%")
-            if battery.percent <= 20:
-                battery_label.setStyleSheet("color:#DC2626;")
-            elif battery.percent <= 50:
-                battery_label.setStyleSheet("color:#D97706;")
-        elif battery is not None and battery.voltage_mv is not None:
-            battery_label.setText(f"🔋 {battery.voltage_mv}mV")
+        pct = battery.percent if battery else None
+        volt = battery.voltage_mv if battery else None
+        if pct is not None:
+            color = "#FF5C5C" if pct <= 20 else "#FFB020" if pct <= 50 else "#3DDC97"
+            blabel = QLabel(f"🔋 {pct}%")
+            blabel.setObjectName("batteryPct")
+            blabel.setStyleSheet(f"color:{color}; border:none; background:transparent;")
+            v.addWidget(blabel)
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(pct)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(8)
+            bar.setStyleSheet(f"QProgressBar::chunk {{ background: {color}; }}")
+            v.addWidget(bar)
+        elif volt is not None:
+            blabel = QLabel(f"🔋 {volt} mV")
+            blabel.setObjectName("batteryPct")
+            blabel.setStyleSheet("color:#8A94A7; border:none; background:transparent;")
+            v.addWidget(blabel)
+        elif result.brand == "Logitech":
+            blabel = QLabel("🔋 睡眠中 — 动一动鼠标后点「读取全部电量」")
+            blabel.setStyleSheet("color:#5A6579; font-size:12px; border:none; background:transparent;")
+            blabel.setWordWrap(True)
+            v.addWidget(blabel)
         else:
-            battery_label.setText("电量 —")
-        v.addWidget(battery_label)
+            blabel = QLabel("🔋 电量未知")
+            blabel.setStyleSheet("color:#5A6579; font-size:15px; font-weight:600; border:none; background:transparent;")
+            v.addWidget(blabel)
 
-        # 罗技接收器/鼠标 → DPI 卡片
         if result.brand == "Logitech" and any(
                 f"{d.usage_page:04X}" == "FF00" for d in ifaces):
             dpi_row = QHBoxLayout()
@@ -459,10 +495,6 @@ class MainWindow(QMainWindow):
             dpi_row.addWidget(dpi_btn)
             dpi_row.addStretch(1)
             v.addLayout(dpi_row)
-        elif result.status is DeviceStatus.UNKNOWN:
-            tip = QLabel("未识别 — 可用高级模式学习")
-            tip.setStyleSheet("color:#9CA3AF; font-size:11px; border:none;")
-            v.addWidget(tip)
         v.addStretch(1)
         return card
 
