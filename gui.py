@@ -18,7 +18,9 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -71,7 +73,7 @@ from core.report_io import ReportIO, execute_feature
 from core.safe_write import safe_write
 from core.wizard import build_drafts, build_protocol_block, merge_into_db
 
-APP_VERSION = "v0.6.0"
+APP_VERSION = "v0.6.1"
 
 STATUS_COLOR = {
     DeviceStatus.KNOWN: QColor("#2ecc71"),
@@ -133,13 +135,415 @@ class Worker(QThread):
 # 主窗口
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# 用户客户端（v0.6.1 重设计）：单页设备卡片墙，专注 电量 + DPI
+# ---------------------------------------------------------------------------
+
+STYLE_SHEET = """
+QMainWindow, QDialog { background: #F5F7FB; }
+#appTitle { font-size: 20px; font-weight: 700; color: #111827; }
+#appSubtitle { font-size: 12px; color: #6B7280; }
+#card { background: white; border: 1px solid #E5E7EB; border-radius: 14px; }
+#cardTitle { font-size: 15px; font-weight: 700; color: #111827; }
+#cardSub { font-size: 12px; color: #6B7280; }
+#batteryBig { font-size: 26px; font-weight: 800; color: #111827; }
+QPushButton { background: #2D7DD2; color: white; border: none;
+              border-radius: 8px; padding: 7px 14px; font-size: 13px; }
+QPushButton:hover { background: #2468B0; }
+QPushButton:disabled { background: #C3D4E8; }
+QPushButton#ghostBtn { background: #EEF2F7; color: #111827; }
+QPushButton#ghostBtn:hover { background: #DDE5EF; }
+QSlider::groove:horizontal { height: 6px; background: #E5E7EB; border-radius: 3px; }
+QSlider::handle:horizontal { width: 18px; margin: -7px 0; border-radius: 9px; background: #2D7DD2; }
+QSlider::sub-page:horizontal { background: #9EC1E8; border-radius: 3px; }
+"""
+
+_TYPE_ICONS = {"鼠标": "\U0001F5B1\uFE0F", "键盘": "\u2328\uFE0F", "耳机": "\U0001F3A7",
+               "接收器": "\U0001F4E1", "音频设备": "\U0001F3A7", "外设": "\U0001F50C"}
+
+
+def _type_info(key: str, ifaces: list, entry: dict | None) -> tuple[str, str]:
+    """(emoji, 类型名)：协议库 type 字段优先，否则按 usage 启发式。"""
+    t = (entry or {}).get("type")
+    if t in _TYPE_ICONS:
+        return _TYPE_ICONS[t], t
+    usages = {d.usage for d in ifaces}
+    if 0x0002 in usages:
+        return _TYPE_ICONS["鼠标"], "鼠标"
+    if 0x0006 in usages:
+        return _TYPE_ICONS["键盘"], "键盘"
+    if 0x000C in usages or 0x000B in usages:
+        return _TYPE_ICONS["耳机"], "音频设备"
+    return _TYPE_ICONS["外设"], "外设"
+
+
+class DpiDialog(QDialog):
+    """简洁 DPI 调节弹窗：读取 → 滑条 → 应用（安全写）。"""
+
+    def __init__(self, parent, key: str, ifaces: list, product: str):
+        super().__init__(parent)
+        self.setWindowTitle(f"调节鼠标 DPI — {product}")
+        self.setStyleSheet(STYLE_SHEET)
+        self.setMinimumWidth(420)
+        self._ifaces = ifaces
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        self._status = QLabel("连接中…（设备睡眠时请动一动鼠标，HID++ 流量会唤醒它）")
+        self._status.setWordWrap(True)
+        layout.addWidget(self._status)
+
+        row = QHBoxLayout()
+        self._spin = QSpinBox()
+        self._spin.setRange(50, 32000)
+        self._spin.setSingleStep(50)
+        self._spin.setValue(800)
+        self._slider = QSlider(Qt.Horizontal)
+        self._slider.setRange(50, 32000)
+        self._slider.setValue(800)
+        self._spin.valueChanged.connect(self._slider.setValue)
+        self._slider.valueChanged.connect(self._spin.setValue)
+        row.addWidget(self._slider, 1)
+        row.addWidget(self._spin)
+        layout.addLayout(row)
+
+        self._info = QLabel("档位表：读取中…")
+        self._info.setStyleSheet("color:#6B7280; font-size:12px;")
+        layout.addWidget(self._info)
+
+        btns = QHBoxLayout()
+        apply_btn = QPushButton("应用 DPI")
+        apply_btn.clicked.connect(self._apply)
+        close_btn = QPushButton("关闭")
+        close_btn.setObjectName("ghostBtn")
+        close_btn.clicked.connect(self.reject)
+        btns.addWidget(apply_btn, 1)
+        btns.addWidget(close_btn)
+        layout.addLayout(btns)
+
+        self._read()
+
+    def _build_link(self):
+        short = next((d for d in self._ifaces
+                      if f"{d.usage_page:04X}" == "FF00" and f"{d.usage:04X}" == "0001"), None)
+        long_if = next((d for d in self._ifaces
+                        if f"{d.usage_page:04X}" == "FF00" and f"{d.usage:04X}" == "0002"), None)
+        if short is None and long_if is None:
+            return None
+        return HidppLink(short.path if short else None, long_if.path if long_if else None)
+
+    def _slot(self) -> int:
+        """接收器配对设备走槽位 1；无长通道的直连设备用 0xFF。"""
+        has_long = any(f"{d.usage_page:04X}" == "FF00" and f"{d.usage:04X}" == "0002"
+                       for d in self._ifaces)
+        return 1 if has_long else 0xFF
+
+    def _track(self, worker: Worker):
+        parent = self.parent()
+        if hasattr(parent, "_workers"):
+            parent._workers.append(worker)
+
+    def _read(self):
+        slot = self._slot()
+
+        def job():
+            link = self._build_link()
+            if link is None:
+                return None, "未找到 HID++ 接口"
+            with link:
+                if ensure_online(link, slot, attempts=10) is None:
+                    return None, "设备不在线（请动一动鼠标再试）"
+                dpi, dpi_y, lod, default = read_dpi(link, slot)
+                lst = get_dpi_list(link, slot)
+            return (dpi, dpi_y, lod, default, lst), None
+
+        worker = Worker(job, self)
+
+        def done(payload):
+            status, value = payload
+            if status != "ok" or value[1]:
+                self._status.setText(value if status != "ok" else value[1])
+                return
+            dpi, dpi_y, lod, default, lst = value[0]
+            if dpi is None:
+                self._status.setText("读取失败（设备可能睡眠中，动一动鼠标再试）")
+                return
+            self._spin.setValue(dpi)
+            if lst:
+                self._slider.setRange(lst[0], lst[-1])
+                self._spin.setRange(lst[0], lst[-1])
+                self._info.setText(f"支持 {len(lst)} 档（{lst[0]}–{lst[-1]}）")
+            extra = f" · Y轴 {dpi_y}" if dpi_y else ""
+            extra += f" · LOD {lod}" if lod is not None else ""
+            self._status.setText(f"✅ 当前 {dpi} DPI{extra}")
+
+        worker.done.connect(done)
+        self._track(worker)
+        worker.start()
+
+    def _apply(self):
+        slot = self._slot()
+        target = self._spin.value()
+        self._status.setText(f"应用 {target} DPI 中…（读旧→写→读回验证）")
+
+        def job():
+            link = self._build_link()
+            if link is None:
+                return "未找到 HID++ 接口"
+            with link:
+                if ensure_online(link, slot, attempts=6) is None:
+                    return "设备不在线（请动一动鼠标再试）"
+                outcome = set_dpi(link, slot, target)
+            return "\n".join(outcome.log)
+
+        worker = Worker(job, self)
+
+        def done(payload):
+            status, value = payload
+            text = value if status == "ok" else f"出错: {value}"
+            if "验证: 通过" in text:
+                self._status.setText(f"✅ DPI 已设为 {target}")
+            else:
+                self._status.setText(text)
+
+        worker.done.connect(done)
+        self._track(worker)
+        worker.start()
+
+
 class MainWindow(QMainWindow):
+    """用户客户端主窗口：单页卡片墙（电量 + DPI），高级功能收进「高级模式」。"""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(f"外设万能调试器 {APP_VERSION}")
+        self.resize(1000, 680)
+        self.setStyleSheet(STYLE_SHEET)
+
+        self.db = load_db(DEFAULT_DB_PATH)
+        self._devices: dict[str, list[dm.DeviceInfo]] = {}
+        self._battery_cache: dict[str, BatteryResult] = {}
+        self._workers: list[Worker] = []
+        self._watcher: HotplugWatcher | None = None
+        self._advanced: AdvancedWindow | None = None
+        self._settings = QSettings("AvR0raa", "peripheral-tool")
+
+        self._build_ui()
+        self.refresh_devices()
+        self._on_battery_all()          # 开机自动读一轮电量
+        self._start_watcher()
+
+    def _build_ui(self):
+        central = QWidget()
+        root = QVBoxLayout(central)
+        root.setContentsMargins(24, 20, 24, 16)
+        root.setSpacing(14)
+
+        header = QHBoxLayout()
+        title_box = QVBoxLayout()
+        title = QLabel("外设万能调试器")
+        title.setObjectName("appTitle")
+        subtitle = QLabel("自动识别你的外设 · 电量一目了然 · 罗技鼠标直接调 DPI")
+        subtitle.setObjectName("appSubtitle")
+        title_box.addWidget(title)
+        title_box.addWidget(subtitle)
+        header.addLayout(title_box)
+        header.addStretch(1)
+
+        adv_btn = QPushButton("高级模式")
+        adv_btn.setObjectName("ghostBtn")
+        adv_btn.setToolTip("协议开发：学习模式 / 描述符解析 / 批量探测 / 配置档案")
+        adv_btn.clicked.connect(self._open_advanced)
+        battery_btn = QPushButton("读取全部电量")
+        battery_btn.clicked.connect(self._on_battery_all)
+        refresh_btn = QPushButton("刷新")
+        refresh_btn.setObjectName("ghostBtn")
+        refresh_btn.clicked.connect(self.refresh_devices)
+        header.addWidget(adv_btn)
+        header.addWidget(battery_btn)
+        header.addWidget(refresh_btn)
+        root.addLayout(header)
+
+        self._grid_host = QWidget()
+        self._grid = QGridLayout(self._grid_host)
+        self._grid.setSpacing(16)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setWidget(self._grid_host)
+        root.addWidget(scroll, 1)
+        self.setCentralWidget(central)
+        self.statusBar().showMessage("就绪 — 插拔设备会自动刷新")
+
+    # ---- 设备卡片 ----
+
+    def refresh_devices(self):
+        try:
+            devices = dm.list_devices()
+        except dm.HIDError as exc:
+            self.statusBar().showMessage(f"枚举失败: {exc}")
+            return
+        grouped: dict[str, list[dm.DeviceInfo]] = {}
+        for d in devices:
+            grouped.setdefault(f"{d.vid_hex}:{d.pid_hex}", []).append(d)
+        self._devices = grouped
+        self._rebuild_cards()
+
+    def _rebuild_cards(self):
+        while self._grid.count():
+            item = self._grid.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        if not self._devices:
+            empty = QLabel("没有发现 HID 设备 — 插上外设或点「刷新」")
+            empty.setStyleSheet("color:#6B7280; font-size:14px;")
+            self._grid.addWidget(empty, 0, 0)
+            return
+        for index, key in enumerate(sorted(self._devices)):
+            self._grid.addWidget(self._build_card(key), index // 3, index % 3)
+        self.statusBar().showMessage(
+            f"{len(self._devices)} 台设备 · 上次刷新 {time.strftime('%H:%M:%S')}")
+
+    def _build_card(self, key: str) -> QFrame:
+        ifaces = self._devices[key]
+        first = ifaces[0]
+        result = fingerprint(first, self.db)
+        entry = result.entry or {}
+        icon, type_name = _type_info(key, ifaces, entry)
+        product = first.product or "(未命名)"
+
+        card = QFrame()
+        card.setObjectName("card")
+        card.setMinimumSize(270, 170)
+        card.setMaximumHeight(220)
+        v = QVBoxLayout(card)
+        v.setContentsMargins(18, 14, 18, 14)
+        v.setSpacing(6)
+
+        head = QHBoxLayout()
+        icon_label = QLabel(icon)
+        icon_label.setStyleSheet("font-size: 26px; border: none;")
+        name = QLabel(product[:20])
+        name.setObjectName("cardTitle")
+        head.addWidget(icon_label)
+        head.addWidget(name, 1)
+        v.addLayout(head)
+
+        brand = result.brand_zh or result.brand or "未知品牌"
+        sub = QLabel(f"{brand} · {type_name} · {len(ifaces)} 接口")
+        sub.setObjectName("cardSub")
+        v.addWidget(sub)
+
+        battery = self._battery_cache.get(key)
+        battery_label = QLabel()
+        battery_label.setObjectName("batteryBig")
+        if battery is not None and battery.percent is not None:
+            battery_label.setText(f"🔋 {battery.percent}%")
+            if battery.percent <= 20:
+                battery_label.setStyleSheet("color:#DC2626;")
+            elif battery.percent <= 50:
+                battery_label.setStyleSheet("color:#D97706;")
+        elif battery is not None and battery.voltage_mv is not None:
+            battery_label.setText(f"🔋 {battery.voltage_mv}mV")
+        else:
+            battery_label.setText("电量 —")
+        v.addWidget(battery_label)
+
+        # 罗技接收器/鼠标 → DPI 卡片
+        if result.brand == "Logitech" and any(
+                f"{d.usage_page:04X}" == "FF00" for d in ifaces):
+            dpi_row = QHBoxLayout()
+            dpi_btn = QPushButton("调节 DPI")
+            dpi_btn.clicked.connect(lambda _, k=key: self._open_dpi(k))
+            dpi_row.addWidget(dpi_btn)
+            dpi_row.addStretch(1)
+            v.addLayout(dpi_row)
+        elif result.status is DeviceStatus.UNKNOWN:
+            tip = QLabel("未识别 — 可用高级模式学习")
+            tip.setStyleSheet("color:#9CA3AF; font-size:11px; border:none;")
+            v.addWidget(tip)
+        v.addStretch(1)
+        return card
+
+    # ---- 动作 ----
+
+    def _open_dpi(self, key: str):
+        ifaces = self._devices.get(key, [])
+        dlg = DpiDialog(self, key, ifaces, ifaces[0].product or "鼠标")
+        dlg.exec()
+
+    def _open_advanced(self):
+        self._advanced = AdvancedWindow()
+        self._advanced.show()
+
+    def _on_battery_all(self):
+        grouped = dict(self._devices)
+        if not grouped:
+            return
+        self.statusBar().showMessage("电量扫描中…（罗技设备睡眠时会先唤醒）")
+
+        def read_descriptor(path):
+            import hid
+            try:
+                dev = hid.device()
+                dev.open_path(path.encode("utf-8") if isinstance(path, str) else path)
+                try:
+                    return bytes(dev.get_report_descriptor())
+                finally:
+                    dev.close()
+            except Exception:
+                return None
+
+        def job():
+            return scan_all(grouped, read_descriptor)
+
+        worker = Worker(job, self)
+
+        def on_done(payload):
+            status, value = payload
+            if status != "ok":
+                self.statusBar().showMessage(f"电量扫描出错: {value}")
+                return
+            self._battery_cache = {r.vidpid: r for r in value}
+            known = [r for r in value if r.percent is not None]
+            self.statusBar().showMessage(
+                f"电量扫描完成 — {len(known)}/{len(value)} 台有读数")
+            self._rebuild_cards()
+
+        worker.done.connect(on_done)
+        self._workers.append(worker)
+        worker.start()
+
+    # ---- 热插拔 / 关闭 ----
+
+    def _start_watcher(self):
+        self._watcher = HotplugWatcher(self)
+        self._watcher.event.connect(self._on_hotplug)
+        self._watcher.start()
+
+    def _on_hotplug(self, event):
+        d = event.device
+        action = "接入" if event.kind == "added" else "移除"
+        self.statusBar().showMessage(
+            f"设备{action}: {d.vid_hex}:{d.pid_hex} {d.product or ''}")
+        self.refresh_devices()
+
+    def closeEvent(self, event):
+        self._settings.setValue("window/geometry", self.saveGeometry())
+        if self._watcher:
+            self._watcher.stop_watching()
+            self._watcher.wait(2000)
+        super().closeEvent(event)
+
+
+class AdvancedWindow(QMainWindow):
 
     log_line = Signal(str)          # hex 日志追加（工作线程 → GUI 线程）
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"外设万能调试器 {APP_VERSION} — 计算机外设驱动合集")
+        self.setWindowTitle(f"高级模式（协议开发） — 外设万能调试器 {APP_VERSION}")
         self.resize(1080, 720)
 
         self.db = load_db(DEFAULT_DB_PATH)
