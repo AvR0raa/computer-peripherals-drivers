@@ -52,6 +52,7 @@ from core.fingerprint import (
     DEFAULT_DB_PATH,
     DeviceStatus,
     fingerprint,
+    is_internal_device,
     load_db,
     save_db,
 )
@@ -74,7 +75,7 @@ from core.report_io import ReportIO, execute_feature
 from core.safe_write import safe_write
 from core.wizard import build_drafts, build_protocol_block, merge_into_db
 
-APP_VERSION = "v0.6.2"
+APP_VERSION = "v0.6.3"
 
 STATUS_COLOR = {
     DeviceStatus.KNOWN: QColor("#2ecc71"),
@@ -386,6 +387,18 @@ class MainWindow(QMainWindow):
 
     # ---- 设备卡片 ----
 
+    def _hidden_list(self) -> list[str]:
+        return [x for x in (self._settings.value("hidden_devices", []) or [])
+                if isinstance(x, str)]
+
+    def _hide_device(self, key: str):
+        hidden = self._hidden_list()
+        if key not in hidden:
+            hidden.append(key)
+            self._settings.setValue("hidden_devices", hidden)
+        self._battery_cache.pop(key, None)
+        self.refresh_devices()
+
     def refresh_devices(self):
         try:
             devices = dm.list_devices()
@@ -393,10 +406,21 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"枚举失败: {exc}")
             return
         grouped: dict[str, list[dm.DeviceInfo]] = {}
+        hidden = set(self._hidden_list())
+        internal_keys: set[str] = set()
         for d in devices:
-            grouped.setdefault(f"{d.vid_hex}:{d.pid_hex}", []).append(d)
+            key = f"{d.vid_hex}:{d.pid_hex}"
+            if key in hidden:
+                continue
+            if is_internal_device(self.db, d) or d.bus_type == 3:
+                internal_keys.add(key)
+                continue
+            grouped.setdefault(key, []).append(d)
         self._devices = grouped
         self._rebuild_cards()
+        if internal_keys:
+            self.statusBar().showMessage(
+                f"已隐藏 {len(internal_keys)} 个笔记本/系统内部设备（非外设）")
 
     def _rebuild_cards(self):
         while self._grid.count():
@@ -426,6 +450,9 @@ class MainWindow(QMainWindow):
         card.setObjectName("card")
         card.setMinimumSize(280, 190)
         card.setMaximumHeight(230)
+        card.setContextMenuPolicy(Qt.CustomContextMenu)
+        card.customContextMenuRequested.connect(
+            lambda _, k=key: self._show_card_menu(k, card))
         v = QVBoxLayout(card)
         v.setContentsMargins(18, 16, 18, 16)
         v.setSpacing(8)
@@ -499,6 +526,15 @@ class MainWindow(QMainWindow):
         return card
 
     # ---- 动作 ----
+
+    def _show_card_menu(self, key: str, card: QFrame):
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setStyleSheet("QMenu { background: #1C2333; color: #F0F4FA; border: 1px solid #2A3547; }")
+        act = menu.addAction("隐藏此设备（不插也不占卡片）")
+        chosen = menu.exec(card.mapToGlobal(card.rect().center()))
+        if chosen is act:
+            self._hide_device(key)
 
     def _open_dpi(self, key: str):
         ifaces = self._devices.get(key, [])

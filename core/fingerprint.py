@@ -168,6 +168,17 @@ def validate_db(db: dict) -> None:
                 _validate_protocol(vid_pid, entry["protocol"])
 
 
+def is_internal_device(db: dict, device) -> bool:
+    """判断是否笔记本内置/系统虚拟设备（不是用户插的外设）。
+
+    依据：brands 表 internal 标记 + HID over I2C 总线（bus_type=3，触控板等）。
+    """
+    brand = db.get("brands", {}).get(getattr(device, "vid_hex", ""), {})
+    if brand.get("internal"):
+        return True
+    return getattr(device, "bus_type", 1) == 3
+
+
 def load_db(path: Path = DEFAULT_DB_PATH) -> dict:
     """读取并校验协议库。结构非法抛 ProtocolDBError。"""
     if not path.is_file():

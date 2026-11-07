@@ -1,65 +1,239 @@
 {
   "$schema": "protocol-db/v2",
   "_comment": "M5b 协议库。数据来源：brands VID 为 usb.ids (linux-usb.org USB ID Repository) 公开注册值；devices VID:PID+名称逐条摘自 usb.ids 对应厂商块（本机实测条目除外，标注 hidapi-observed）；note 中的 OpenRazer/HeadsetControl/libratbag/OpenRGB 为社区项目支持线索（协议可移植方向，非已验证）。official 为品牌官方驱动软件入口。verified=true 表示本机真机验证过。不确定的信息宁可不录。",
-
   "brands": {
-    "046D": { "name": "Logitech", "name_zh": "罗技", "sdk": ["GHSDK", "LGS"],
-              "official": { "software": "G HUB", "url": "https://www.logitechg.com/innovation/g-hub.html" } },
-    "1532": { "name": "Razer", "name_zh": "雷蛇", "sdk": ["ChromaSDK"],
-              "official": { "software": "Synapse", "url": "https://razer.com/synapse" } },
-    "1038": { "name": "SteelSeries", "name_zh": "赛睿", "sdk": ["SteelSeriesGG-SDK"],
-              "official": { "software": "SteelSeries GG", "url": "https://steelseries.com/gg" } },
-    "1B1C": { "name": "Corsair", "name_zh": "海盗船", "sdk": ["iCUESDK"],
-              "official": { "software": "iCUE", "url": "https://www.corsair.com/us/en/downloads" } },
-    "0B05": { "name": "ASUS", "name_zh": "华硕/ROG", "sdk": ["AuraSDK"],
-              "official": { "software": "Armoury Crate", "url": "https://www.asus.com/armoury-crate/" } },
-    "0951": { "name": "HyperX", "name_zh": "HyperX（金士顿线）",
-              "official": { "software": "NGENUITY", "url": "https://hyperx.com/pages/ngenuity" } },
-    "03F0": { "name": "HyperX", "name_zh": "HyperX（HP 线）",
-              "note": "HyperX 并入 HP 后部分产品挂 03F0",
-              "official": { "software": "NGENUITY", "url": "https://hyperx.com/pages/ngenuity" } },
-    "041E": { "name": "Creative", "name_zh": "创新",
-              "official": { "software": "Creative App", "url": "https://support.creative.com/" } },
-    "1462": { "name": "MSI", "name_zh": "微星", "sdk": ["MysticLightSDK"],
-              "official": { "software": "MSI Center", "url": "https://www.msi.com/Landing/MSI-Center" } },
-    "2516": { "name": "Cooler Master", "name_zh": "酷冷至尊",
-              "official": { "software": "MasterPlus", "url": "https://www.coolermaster.com/masterplus/" } },
-    "0C45": { "name": "Redragon", "name_zh": "红龙",
-              "note": "产品多挂 Microdia 芯片 VID 0C45",
-              "official": { "software": "Redragon 官方软件", "url": "https://redragonshop.com/" } },
-    "046A": { "name": "CHERRY", "name_zh": "樱桃",
-              "official": { "software": "CHERRY KEYS", "url": "https://www.cherry-worldwide.com/" } },
-    "25A7": { "name": "Dareu", "name_zh": "达尔优",
-              "official": { "software": "达尔优驱动", "url": "https://www.dareu.com/" } },
-    "291D": { "name": "MCHOSE", "name_zh": "迈从", "note": "耳机/鼠标线 (本机 V9 PRO 实测)",
-              "official": { "software": "MCHOSE 驱动", "url": "https://www.mchose.store/" } },
-    "41E4": { "name": "MCHOSE", "name_zh": "迈从", "note": "键盘线 (本机 Ace68-II 实测)",
-              "official": { "software": "MCHOSE 驱动", "url": "https://www.mchose.store/" } },
-    "3151": { "name": "attack shark", "name_zh": "前行者",
-              "note": "ROYUAN 方案: usage page 0xFFFF usage 2, 64字节 feature 报文(id=0), 校验和=0xFF-(sum&0xFF), 响应字节0回显opcode。写入有严格限速(过快可致端点假死)且有危险opcode(含flash擦除)——只读探测优先。参考: dnim.dev/blog/royuan-keyboard-protocol",
-              "official": { "software": "GearHub (网页端)", "url": "https://qmk.top/" } },
-    "09DA": { "name": "A4Tech", "name_zh": "双飞燕",
-              "official": { "software": "A4Tech 驱动", "url": "http://www.a4tech.com.tw/" } },
-    "045E": { "name": "Microsoft", "name_zh": "微软",
-              "official": { "software": "Mouse and Keyboard Center", "url": "https://www.microsoft.com/accessories/downloads" } },
-    "05AC": { "name": "Apple", "name_zh": "苹果" },
-    "3434": { "name": "Keychron", "name_zh": "Keychron",
-              "official": { "software": "Keychron Launcher", "url": "https://launcher.keychron.com/" } },
-    "04D9": { "name": "Holtek (OEM)", "name_zh": "盛群（国产键盘常见 OEM 方案）",
-              "note": "芯片商 VID：大量国产/贴牌键盘用此 VID，品牌需按产品名判断",
-              "official": { "software": "（随品牌）", "url": "https://www.holtek.com/" } },
-    "1377": { "name": "Sennheiser", "name_zh": "森海塞尔" },
-    "047F": { "name": "Plantronics/Poly", "name_zh": "缤特力" },
-    "1EA7": { "name": "Sharkoon", "name_zh": "旋刚" }
+    "046D": {
+      "name": "Logitech",
+      "name_zh": "罗技",
+      "sdk": [
+        "GHSDK",
+        "LGS"
+      ],
+      "official": {
+        "software": "G HUB",
+        "url": "https://www.logitechg.com/innovation/g-hub.html"
+      }
+    },
+    "1532": {
+      "name": "Razer",
+      "name_zh": "雷蛇",
+      "sdk": [
+        "ChromaSDK"
+      ],
+      "official": {
+        "software": "Synapse",
+        "url": "https://razer.com/synapse"
+      }
+    },
+    "1038": {
+      "name": "SteelSeries",
+      "name_zh": "赛睿",
+      "sdk": [
+        "SteelSeriesGG-SDK"
+      ],
+      "official": {
+        "software": "SteelSeries GG",
+        "url": "https://steelseries.com/gg"
+      }
+    },
+    "1B1C": {
+      "name": "Corsair",
+      "name_zh": "海盗船",
+      "sdk": [
+        "iCUESDK"
+      ],
+      "official": {
+        "software": "iCUE",
+        "url": "https://www.corsair.com/us/en/downloads"
+      }
+    },
+    "0B05": {
+      "name": "ASUS",
+      "name_zh": "华硕/ROG",
+      "sdk": [
+        "AuraSDK"
+      ],
+      "official": {
+        "software": "Armoury Crate",
+        "url": "https://www.asus.com/armoury-crate/"
+      }
+    },
+    "0951": {
+      "name": "HyperX",
+      "name_zh": "HyperX（金士顿线）",
+      "official": {
+        "software": "NGENUITY",
+        "url": "https://hyperx.com/pages/ngenuity"
+      }
+    },
+    "03F0": {
+      "name": "HyperX",
+      "name_zh": "HyperX（HP 线）",
+      "note": "HyperX 并入 HP 后部分产品挂 03F0",
+      "official": {
+        "software": "NGENUITY",
+        "url": "https://hyperx.com/pages/ngenuity"
+      }
+    },
+    "041E": {
+      "name": "Creative",
+      "name_zh": "创新",
+      "official": {
+        "software": "Creative App",
+        "url": "https://support.creative.com/"
+      }
+    },
+    "1462": {
+      "name": "MSI",
+      "name_zh": "微星",
+      "sdk": [
+        "MysticLightSDK"
+      ],
+      "official": {
+        "software": "MSI Center",
+        "url": "https://www.msi.com/Landing/MSI-Center"
+      }
+    },
+    "2516": {
+      "name": "Cooler Master",
+      "name_zh": "酷冷至尊",
+      "official": {
+        "software": "MasterPlus",
+        "url": "https://www.coolermaster.com/masterplus/"
+      }
+    },
+    "0C45": {
+      "name": "Redragon",
+      "name_zh": "红龙",
+      "note": "产品多挂 Microdia 芯片 VID 0C45",
+      "official": {
+        "software": "Redragon 官方软件",
+        "url": "https://redragonshop.com/"
+      }
+    },
+    "046A": {
+      "name": "CHERRY",
+      "name_zh": "樱桃",
+      "official": {
+        "software": "CHERRY KEYS",
+        "url": "https://www.cherry-worldwide.com/"
+      }
+    },
+    "25A7": {
+      "name": "Dareu",
+      "name_zh": "达尔优",
+      "official": {
+        "software": "达尔优驱动",
+        "url": "https://www.dareu.com/"
+      }
+    },
+    "291D": {
+      "name": "MCHOSE",
+      "name_zh": "迈从",
+      "note": "耳机/鼠标线 (本机 V9 PRO 实测)",
+      "official": {
+        "software": "MCHOSE 驱动",
+        "url": "https://www.mchose.store/"
+      }
+    },
+    "41E4": {
+      "name": "MCHOSE",
+      "name_zh": "迈从",
+      "note": "键盘线 (本机 Ace68-II 实测)",
+      "official": {
+        "software": "MCHOSE 驱动",
+        "url": "https://www.mchose.store/"
+      }
+    },
+    "3151": {
+      "name": "attack shark",
+      "name_zh": "前行者",
+      "note": "ROYUAN 方案: usage page 0xFFFF usage 2, 64字节 feature 报文(id=0), 校验和=0xFF-(sum&0xFF), 响应字节0回显opcode。写入有严格限速(过快可致端点假死)且有危险opcode(含flash擦除)——只读探测优先。参考: dnim.dev/blog/royuan-keyboard-protocol",
+      "official": {
+        "software": "GearHub (网页端)",
+        "url": "https://qmk.top/"
+      }
+    },
+    "09DA": {
+      "name": "A4Tech",
+      "name_zh": "双飞燕",
+      "official": {
+        "software": "A4Tech 驱动",
+        "url": "http://www.a4tech.com.tw/"
+      }
+    },
+    "045E": {
+      "name": "Microsoft",
+      "name_zh": "微软",
+      "official": {
+        "software": "Mouse and Keyboard Center",
+        "url": "https://www.microsoft.com/accessories/downloads"
+      }
+    },
+    "05AC": {
+      "name": "Apple",
+      "name_zh": "苹果"
+    },
+    "3434": {
+      "name": "Keychron",
+      "name_zh": "Keychron",
+      "official": {
+        "software": "Keychron Launcher",
+        "url": "https://launcher.keychron.com/"
+      }
+    },
+    "04D9": {
+      "name": "Holtek (OEM)",
+      "name_zh": "盛群（国产键盘常见 OEM 方案）",
+      "note": "芯片商 VID：大量国产/贴牌键盘用此 VID，品牌需按产品名判断",
+      "official": {
+        "software": "（随品牌）",
+        "url": "https://www.holtek.com/"
+      }
+    },
+    "1377": {
+      "name": "Sennheiser",
+      "name_zh": "森海塞尔"
+    },
+    "047F": {
+      "name": "Plantronics/Poly",
+      "name_zh": "缤特力"
+    },
+    "1EA7": {
+      "name": "Sharkoon",
+      "name_zh": "旋刚"
+    },
+    "048D": {
+      "name": "ITE",
+      "name_zh": "笔记本内置控制器",
+      "internal": true,
+      "note": "笔记本 EC/传感器，非外设"
+    },
+    "04F3": {
+      "name": "Elan",
+      "name_zh": "笔记本触控板",
+      "internal": true,
+      "note": "HIDI2C 内置触控板，非外设"
+    },
+    "5E2A": {
+      "name": "Windows VHF",
+      "name_zh": "系统虚拟 HID",
+      "internal": true,
+      "note": "Virtual HID Framework 虚拟设备，非外设"
+    }
   },
-
   "pending_brands": [
-    { "name": "MAGEGEE", "name_zh": "美嘉獅",
-      "note": "无公开VID，常见为OEM芯片方案(Holtek 04D9/Microdia 0C45等)。插上设备跑 cli.py list 或 GUI 实测 VID:PID 后移入 brands。" },
-    { "name": "Epomaker/VGN/Aula 等", "name_zh": "其他新兴国产品牌",
-      "note": "VID 未经权威来源核实，插机实测后按 usb.ids 或实测证据录入。" }
+    {
+      "name": "MAGEGEE",
+      "name_zh": "美嘉獅",
+      "note": "无公开VID，常见为OEM芯片方案(Holtek 04D9/Microdia 0C45等)。插上设备跑 cli.py list 或 GUI 实测 VID:PID 后移入 brands。"
+    },
+    {
+      "name": "Epomaker/VGN/Aula 等",
+      "name_zh": "其他新兴国产品牌",
+      "note": "VID 未经权威来源核实，插机实测后按 usb.ids 或实测证据录入。"
+    }
   ],
-
   "devices": {
     "046D:C54D": {
       "brand": "Logitech",
@@ -71,7 +245,10 @@
       "protocol": {
         "name": "hidpp",
         "transport": {
-          "match": { "usage_page": "FF00", "usage": "0001" },
+          "match": {
+            "usage_page": "FF00",
+            "usage": "0001"
+          },
           "short_len": 7,
           "long_len": 20,
           "response_timeout_ms": 600
@@ -82,20 +259,67 @@
             "label": "HID++ Ping（探测设备在线 + 协议版本，只读安全）",
             "kind": "command",
             "report": "output",
-            "template": [16, "{device_index}", 0, "{request_id}", 0, 0, "{mark}"],
+            "template": [
+              16,
+              "{device_index}",
+              0,
+              "{request_id}",
+              0,
+              0,
+              "{mark}"
+            ],
             "params": {
-              "device_index": { "type": "int", "default": 255, "min": 0, "max": 255, "label": "设备索引（0xFF=接收器自身）" },
-              "request_id": { "type": "int", "default": 16, "min": 16, "max": 23, "label": "请求 ID（0x10-0x17）" },
-              "mark": { "type": "int", "default": 66, "min": 0, "max": 255, "label": "随机标记字节（响应需一致）" }
+              "device_index": {
+                "type": "int",
+                "default": 255,
+                "min": 0,
+                "max": 255,
+                "label": "设备索引（0xFF=接收器自身）"
+              },
+              "request_id": {
+                "type": "int",
+                "default": 16,
+                "min": 16,
+                "max": 23,
+                "label": "请求 ID（0x10-0x17）"
+              },
+              "mark": {
+                "type": "int",
+                "default": 66,
+                "min": 0,
+                "max": 255,
+                "label": "随机标记字节（响应需一致）"
+              }
             },
             "response": {
               "min_len": 7,
-              "check": [16, "{device_index}", 0, "{request_id}", null, null, "{mark}"],
-              "extract": { "major": 4, "minor": 5 },
+              "check": [
+                16,
+                "{device_index}",
+                0,
+                "{request_id}",
+                null,
+                null,
+                "{mark}"
+              ],
+              "extract": {
+                "major": 4,
+                "minor": 5
+              },
               "alt": {
                 "label": "HID++ 错误应答（0x8F：1.0 设备或无设备在线）",
-                "check": [16, "{device_index}", 143, null, null, null, null],
-                "extract": { "error_code": 5 }
+                "check": [
+                  16,
+                  "{device_index}",
+                  143,
+                  null,
+                  null,
+                  null,
+                  null
+                ],
+                "extract": {
+                  "error_code": 5
+                }
               }
             }
           }
@@ -118,55 +342,349 @@
       "source": "hidapi-observed",
       "verified": false
     },
-
-    "1532:0084": { "brand": "Razer", "product": "DeathAdder V2", "type": "鼠标", "note": "OpenRazer 支持（DPI/灯光协议可移植）", "source": "usb.ids 1532 块", "verified": false },
-    "1532:0085": { "brand": "Razer", "product": "Basilisk V2", "type": "鼠标", "note": "OpenRazer 支持", "source": "usb.ids 1532 块", "verified": false },
-    "1532:0064": { "brand": "Razer", "product": "Basilisk", "type": "鼠标", "note": "OpenRazer 支持", "source": "usb.ids 1532 块", "verified": false },
-    "1532:0065": { "brand": "Razer", "product": "Basilisk Essential", "type": "鼠标", "note": "OpenRazer 支持", "source": "usb.ids 1532 块", "verified": false },
-    "1532:006E": { "brand": "Razer", "product": "DeathAdder Essential", "type": "鼠标", "note": "OpenRazer 支持", "source": "usb.ids 1532 块", "verified": false },
-    "1532:0078": { "brand": "Razer", "product": "Viper (wired)", "type": "鼠标", "note": "OpenRazer 支持", "source": "usb.ids 1532 块", "verified": false },
-    "1532:007A": { "brand": "Razer", "product": "Viper Ultimate (Wired)", "type": "鼠标", "note": "OpenRazer 支持", "source": "usb.ids 1532 块", "verified": false },
-    "1532:0053": { "brand": "Razer", "product": "Naga Chroma", "type": "鼠标", "note": "OpenRazer 支持", "source": "usb.ids 1532 块", "verified": false },
-    "1532:0067": { "brand": "Razer", "product": "Naga Trinity", "type": "鼠标", "note": "OpenRazer 支持", "source": "usb.ids 1532 块", "verified": false },
-    "1532:0226": { "brand": "Razer", "product": "Huntsman Elite", "type": "键盘", "note": "OpenRazer 支持", "source": "usb.ids 1532 块", "verified": false },
-    "1532:0227": { "brand": "Razer", "product": "Huntsman", "type": "键盘", "note": "OpenRazer 支持", "source": "usb.ids 1532 块", "verified": false },
-    "1532:0243": { "brand": "Razer", "product": "Huntsman Tournament Edition", "type": "键盘", "note": "OpenRazer 支持", "source": "usb.ids 1532 块", "verified": false },
-    "1532:0501": { "brand": "Razer", "product": "Kraken 7.1", "type": "耳机", "note": "OpenRazer 支持（灯光）", "source": "usb.ids 1532 块", "verified": false },
-
-    "046D:C07D": { "brand": "Logitech", "product": "G502", "type": "鼠标", "note": "libratbag/OpenRazer(Consumer) 线索；HID++ 2.0", "source": "usb.ids 046D 块", "verified": false },
-    "046D:C08B": { "brand": "Logitech", "product": "G502 SE HERO", "type": "鼠标", "note": "libratbag 线索；HID++ 2.0", "source": "usb.ids 046D 块", "verified": false },
-    "046D:C088": { "brand": "Logitech", "product": "G Pro Wireless (wired)", "type": "鼠标", "note": "libratbag 线索；HID++ 2.0", "source": "usb.ids 046D 块", "verified": false },
-    "046D:C092": { "brand": "Logitech", "product": "G102/G203 LIGHTSYNC", "type": "鼠标", "note": "libratbag 线索；HID++ 1.0/2.0", "source": "usb.ids 046D 块", "verified": false },
-    "046D:C09D": { "brand": "Logitech", "product": "G102 LIGHTSYNC", "type": "鼠标", "note": "libratbag 线索", "source": "usb.ids 046D 块", "verified": false },
-    "046D:C332": { "brand": "Logitech", "product": "G502 Proteus Spectrum", "type": "鼠标", "note": "libratbag 线索", "source": "usb.ids 046D 块", "verified": false },
-    "046D:0A15": { "brand": "Logitech", "product": "G35 Headset", "type": "耳机", "note": "HeadsetControl 支持（音量/侧音）", "source": "usb.ids 046D 块", "verified": false },
-    "046D:0A17": { "brand": "Logitech", "product": "G330 Headset", "type": "耳机", "note": "HeadsetControl 线索", "source": "usb.ids 046D 块", "verified": false },
-    "046D:0A1F": { "brand": "Logitech", "product": "G930", "type": "耳机", "note": "HeadsetControl 支持（电量/降噪开关）", "source": "usb.ids 046D 块", "verified": false },
-    "046D:0A4D": { "brand": "Logitech", "product": "G430 Surround", "type": "耳机", "note": "HeadsetControl 支持（音量/侧音）", "source": "usb.ids 046D 块", "verified": false },
-    "046D:0A66": { "brand": "Logitech", "product": "G533 Wireless Dongle", "type": "耳机", "note": "HeadsetControl 支持（电量/EQ）", "source": "usb.ids 046D 块", "verified": false },
-    "046D:0AAA": { "brand": "Logitech", "product": "G PRO X Gaming Headset", "type": "耳机", "note": "HeadsetControl 支持（EQ/侧音）", "source": "usb.ids 046D 块", "verified": false },
-    "046D:0A37": { "brand": "Logitech", "product": "USB Headset H540", "type": "耳机", "note": "HeadsetControl 线索", "source": "usb.ids 046D 块", "verified": false },
-    "046D:0A44": { "brand": "Logitech", "product": "Headset H390", "type": "耳机", "note": "HeadsetControl 线索", "source": "usb.ids 046D 块", "verified": false },
-    "046D:0A90": { "brand": "Logitech", "product": "Zone Receiver", "type": "耳机", "note": "HeadsetControl 线索", "source": "usb.ids 046D 块", "verified": false },
-
-    "1038:1260": { "brand": "SteelSeries", "product": "Arctis 7 wireless adapter", "type": "耳机", "note": "HeadsetControl 支持（电量/静音/灯光）", "source": "usb.ids 1038 块", "verified": false },
-
-    "0951:16A4": { "brand": "HyperX", "product": "HyperX 7.1 Audio (Cloud II 等)", "type": "耳机", "note": "HeadsetControl 支持（7.1 开关/音量）", "source": "usb.ids 0951 块", "verified": false },
-    "03F0:16C4": { "brand": "HyperX", "product": "Cloud Flight wireless", "type": "耳机", "note": "HeadsetControl 支持（电量/灯光）", "source": "usb.ids 03F0 块", "verified": false },
-
-    "1B1C:1B13": { "brand": "Corsair", "product": "K70 RGB", "type": "键盘", "note": "OpenRGB 线索", "source": "usb.ids 1B1C 块", "verified": false },
-    "1B1C:1B2D": { "brand": "Corsair", "product": "K95 RGB Platinum", "type": "键盘", "note": "OpenRGB/iCUESDK 线索", "source": "usb.ids 1B1C 块", "verified": false },
-    "1B1C:1B2E": { "brand": "Corsair", "product": "M65 Pro RGB", "type": "鼠标", "note": "OpenRGB 线索", "source": "usb.ids 1B1C 块", "verified": false },
-    "1B1C:1B3D": { "brand": "Corsair", "product": "K55 RGB", "type": "键盘", "note": "OpenRGB 线索", "source": "usb.ids 1B1C 块", "verified": false },
-    "1B1C:1B07": { "brand": "Corsair", "product": "Vengeance K65", "type": "键盘", "note": "", "source": "usb.ids 1B1C 块", "verified": false },
-    "1B1C:1B08": { "brand": "Corsair", "product": "Vengeance K95", "type": "键盘", "note": "", "source": "usb.ids 1B1C 块", "verified": false },
-
-    "0C45:FC2A": { "brand": "Redragon", "product": "M709", "type": "鼠标", "note": "OpenRGB 线索（Microdia 方案）", "source": "usb.ids 0C45 块", "verified": false },
-    "0C45:FC30": { "brand": "Redragon", "product": "M711", "type": "鼠标", "note": "OpenRGB 线索", "source": "usb.ids 0C45 块", "verified": false },
-    "0C45:FC38": { "brand": "Redragon", "product": "M602-RGB", "type": "鼠标", "note": "OpenRGB 线索", "source": "usb.ids 0C45 块", "verified": false },
-    "0C45:FC4D": { "brand": "Redragon", "product": "M908", "type": "鼠标", "note": "OpenRGB 线索", "source": "usb.ids 0C45 块", "verified": false },
-    "0C45:5004": { "brand": "Redragon", "product": "Mitra RGB Keyboard", "type": "键盘", "note": "OpenRGB 线索", "source": "usb.ids 0C45 块", "verified": false },
-
-    "041E:0414": { "brand": "Creative", "product": "HS-720 Headset", "type": "耳机", "note": "", "source": "usb.ids 041E 块", "verified": false }
+    "1532:0084": {
+      "brand": "Razer",
+      "product": "DeathAdder V2",
+      "type": "鼠标",
+      "note": "OpenRazer 支持（DPI/灯光协议可移植）",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1532:0085": {
+      "brand": "Razer",
+      "product": "Basilisk V2",
+      "type": "鼠标",
+      "note": "OpenRazer 支持",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1532:0064": {
+      "brand": "Razer",
+      "product": "Basilisk",
+      "type": "鼠标",
+      "note": "OpenRazer 支持",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1532:0065": {
+      "brand": "Razer",
+      "product": "Basilisk Essential",
+      "type": "鼠标",
+      "note": "OpenRazer 支持",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1532:006E": {
+      "brand": "Razer",
+      "product": "DeathAdder Essential",
+      "type": "鼠标",
+      "note": "OpenRazer 支持",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1532:0078": {
+      "brand": "Razer",
+      "product": "Viper (wired)",
+      "type": "鼠标",
+      "note": "OpenRazer 支持",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1532:007A": {
+      "brand": "Razer",
+      "product": "Viper Ultimate (Wired)",
+      "type": "鼠标",
+      "note": "OpenRazer 支持",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1532:0053": {
+      "brand": "Razer",
+      "product": "Naga Chroma",
+      "type": "鼠标",
+      "note": "OpenRazer 支持",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1532:0067": {
+      "brand": "Razer",
+      "product": "Naga Trinity",
+      "type": "鼠标",
+      "note": "OpenRazer 支持",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1532:0226": {
+      "brand": "Razer",
+      "product": "Huntsman Elite",
+      "type": "键盘",
+      "note": "OpenRazer 支持",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1532:0227": {
+      "brand": "Razer",
+      "product": "Huntsman",
+      "type": "键盘",
+      "note": "OpenRazer 支持",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1532:0243": {
+      "brand": "Razer",
+      "product": "Huntsman Tournament Edition",
+      "type": "键盘",
+      "note": "OpenRazer 支持",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1532:0501": {
+      "brand": "Razer",
+      "product": "Kraken 7.1",
+      "type": "耳机",
+      "note": "OpenRazer 支持（灯光）",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "046D:C07D": {
+      "brand": "Logitech",
+      "product": "G502",
+      "type": "鼠标",
+      "note": "libratbag/OpenRazer(Consumer) 线索；HID++ 2.0",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:C08B": {
+      "brand": "Logitech",
+      "product": "G502 SE HERO",
+      "type": "鼠标",
+      "note": "libratbag 线索；HID++ 2.0",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:C088": {
+      "brand": "Logitech",
+      "product": "G Pro Wireless (wired)",
+      "type": "鼠标",
+      "note": "libratbag 线索；HID++ 2.0",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:C092": {
+      "brand": "Logitech",
+      "product": "G102/G203 LIGHTSYNC",
+      "type": "鼠标",
+      "note": "libratbag 线索；HID++ 1.0/2.0",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:C09D": {
+      "brand": "Logitech",
+      "product": "G102 LIGHTSYNC",
+      "type": "鼠标",
+      "note": "libratbag 线索",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:C332": {
+      "brand": "Logitech",
+      "product": "G502 Proteus Spectrum",
+      "type": "鼠标",
+      "note": "libratbag 线索",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:0A15": {
+      "brand": "Logitech",
+      "product": "G35 Headset",
+      "type": "耳机",
+      "note": "HeadsetControl 支持（音量/侧音）",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:0A17": {
+      "brand": "Logitech",
+      "product": "G330 Headset",
+      "type": "耳机",
+      "note": "HeadsetControl 线索",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:0A1F": {
+      "brand": "Logitech",
+      "product": "G930",
+      "type": "耳机",
+      "note": "HeadsetControl 支持（电量/降噪开关）",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:0A4D": {
+      "brand": "Logitech",
+      "product": "G430 Surround",
+      "type": "耳机",
+      "note": "HeadsetControl 支持（音量/侧音）",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:0A66": {
+      "brand": "Logitech",
+      "product": "G533 Wireless Dongle",
+      "type": "耳机",
+      "note": "HeadsetControl 支持（电量/EQ）",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:0AAA": {
+      "brand": "Logitech",
+      "product": "G PRO X Gaming Headset",
+      "type": "耳机",
+      "note": "HeadsetControl 支持（EQ/侧音）",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:0A37": {
+      "brand": "Logitech",
+      "product": "USB Headset H540",
+      "type": "耳机",
+      "note": "HeadsetControl 线索",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:0A44": {
+      "brand": "Logitech",
+      "product": "Headset H390",
+      "type": "耳机",
+      "note": "HeadsetControl 线索",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:0A90": {
+      "brand": "Logitech",
+      "product": "Zone Receiver",
+      "type": "耳机",
+      "note": "HeadsetControl 线索",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "1038:1260": {
+      "brand": "SteelSeries",
+      "product": "Arctis 7 wireless adapter",
+      "type": "耳机",
+      "note": "HeadsetControl 支持（电量/静音/灯光）",
+      "source": "usb.ids 1038 块",
+      "verified": false
+    },
+    "0951:16A4": {
+      "brand": "HyperX",
+      "product": "HyperX 7.1 Audio (Cloud II 等)",
+      "type": "耳机",
+      "note": "HeadsetControl 支持（7.1 开关/音量）",
+      "source": "usb.ids 0951 块",
+      "verified": false
+    },
+    "03F0:16C4": {
+      "brand": "HyperX",
+      "product": "Cloud Flight wireless",
+      "type": "耳机",
+      "note": "HeadsetControl 支持（电量/灯光）",
+      "source": "usb.ids 03F0 块",
+      "verified": false
+    },
+    "1B1C:1B13": {
+      "brand": "Corsair",
+      "product": "K70 RGB",
+      "type": "键盘",
+      "note": "OpenRGB 线索",
+      "source": "usb.ids 1B1C 块",
+      "verified": false
+    },
+    "1B1C:1B2D": {
+      "brand": "Corsair",
+      "product": "K95 RGB Platinum",
+      "type": "键盘",
+      "note": "OpenRGB/iCUESDK 线索",
+      "source": "usb.ids 1B1C 块",
+      "verified": false
+    },
+    "1B1C:1B2E": {
+      "brand": "Corsair",
+      "product": "M65 Pro RGB",
+      "type": "鼠标",
+      "note": "OpenRGB 线索",
+      "source": "usb.ids 1B1C 块",
+      "verified": false
+    },
+    "1B1C:1B3D": {
+      "brand": "Corsair",
+      "product": "K55 RGB",
+      "type": "键盘",
+      "note": "OpenRGB 线索",
+      "source": "usb.ids 1B1C 块",
+      "verified": false
+    },
+    "1B1C:1B07": {
+      "brand": "Corsair",
+      "product": "Vengeance K65",
+      "type": "键盘",
+      "note": "",
+      "source": "usb.ids 1B1C 块",
+      "verified": false
+    },
+    "1B1C:1B08": {
+      "brand": "Corsair",
+      "product": "Vengeance K95",
+      "type": "键盘",
+      "note": "",
+      "source": "usb.ids 1B1C 块",
+      "verified": false
+    },
+    "0C45:FC2A": {
+      "brand": "Redragon",
+      "product": "M709",
+      "type": "鼠标",
+      "note": "OpenRGB 线索（Microdia 方案）",
+      "source": "usb.ids 0C45 块",
+      "verified": false
+    },
+    "0C45:FC30": {
+      "brand": "Redragon",
+      "product": "M711",
+      "type": "鼠标",
+      "note": "OpenRGB 线索",
+      "source": "usb.ids 0C45 块",
+      "verified": false
+    },
+    "0C45:FC38": {
+      "brand": "Redragon",
+      "product": "M602-RGB",
+      "type": "鼠标",
+      "note": "OpenRGB 线索",
+      "source": "usb.ids 0C45 块",
+      "verified": false
+    },
+    "0C45:FC4D": {
+      "brand": "Redragon",
+      "product": "M908",
+      "type": "鼠标",
+      "note": "OpenRGB 线索",
+      "source": "usb.ids 0C45 块",
+      "verified": false
+    },
+    "0C45:5004": {
+      "brand": "Redragon",
+      "product": "Mitra RGB Keyboard",
+      "type": "键盘",
+      "note": "OpenRGB 线索",
+      "source": "usb.ids 0C45 块",
+      "verified": false
+    },
+    "041E:0414": {
+      "brand": "Creative",
+      "product": "HS-720 Headset",
+      "type": "耳机",
+      "note": "",
+      "source": "usb.ids 041E 块",
+      "verified": false
+    }
   }
 }

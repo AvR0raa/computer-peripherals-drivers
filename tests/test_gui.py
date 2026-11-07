@@ -111,3 +111,38 @@ def test_advanced_button_opens_developer_window(window):
     assert window._advanced is not None
     assert "高级模式" in window._advanced.windowTitle()
     window._advanced.close()
+
+
+# ---------------------------------------------------------------------------
+# 内部/系统设备过滤 + 手动隐藏（v0.6.3）
+# ---------------------------------------------------------------------------
+
+def test_internal_and_i2c_devices_filtered(window, monkeypatch):
+    from core.battery import BatteryResult
+    monkeypatch.setattr(gui_mod, "scan_all", lambda g, rd: [])
+    # ITE(内部) + I2C 触控板 + 正常外设
+    monkeypatch.setattr(dm, "list_devices", lambda: [
+        dm.DeviceInfo.from_hid_dict(fake_raw("ite", vid=0x048D, pid=0xC103,
+                                             product="ITE Device(8910)")),
+        dm.DeviceInfo.from_hid_dict(fake_raw("tp", vid=0x04F3, pid=0x327E,
+                                             product="HIDI2C Device", bus_type=3)),
+        dm.DeviceInfo.from_hid_dict(fake_raw("ok", vid=0x1234, pid=0x5678,
+                                             product="My Mouse")),
+    ])
+    window.refresh_devices()
+    assert set(window._devices.keys()) == {"1234:5678"}
+
+
+def test_hide_device_persists(window, qapp, monkeypatch, tmp_path):
+    monkeypatch.setattr(dm, "list_devices", lambda: [
+        dm.DeviceInfo.from_hid_dict(fake_raw("x", vid=0x1234, pid=0x5678,
+                                             product="Annoying")),
+    ])
+    window.refresh_devices()
+    assert window._grid.count() == 1
+    window._hide_device("1234:5678")
+    assert window._grid.count() == 1        # 空状态提示占位
+    assert "1234:5678" in window._hidden_list()
+    # 重新枚举仍然被隐藏
+    window.refresh_devices()
+    assert "1234:5678" not in window._devices
