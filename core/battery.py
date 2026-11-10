@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from core.descriptor import ReportField, parse_report_descriptor
 from core.hidpp import HidppBattery, HidppLink, ping, read_battery
 from core.report_io import ReportIO
+from core.vendor_battery import try_vendor_battery
 
 BATTERY_USAGE_PAGE = 0x85   # HID Battery System
 
@@ -123,7 +124,15 @@ def scan_all(
                 continue
             result.detail = "罗技设备：HID++ 未取得电量（无配对设备/无 vendor 接口）"
 
-        # 2) 标准电量页
+        # 2) 厂商协议（EZ2.4G 移植: ATK前行者/MCHOSE/杰理）——只读查询命令
+        vendor = _scan_vendor(first.vid_hex, ifaces)
+        if vendor is not None:
+            vendor.vidpid = vidpid
+            vendor.product = result.product
+            results.append(vendor)
+            continue
+
+        # 3) 标准电量页
         standard = _scan_standard(vidpid, ifaces, read_descriptor)
         if standard is not None:
             standard.vidpid = vidpid
@@ -131,11 +140,29 @@ def scan_all(
             results.append(standard)
             continue
 
-        # 3) 无源
+        # 4) 无源
         if not result.detail:
             result.detail = "未发现电量来源（vendor 协议未逆向，可用学习模式抓官方软件）"
         results.append(result)
     return results
+
+
+def _scan_vendor(vid_hex: str, ifaces: list) -> BatteryResult | None:
+    """对 vendor 自定义接口跑厂商电量协议（写查询命令 + 听应答）。"""
+    for iface in ifaces:
+        if iface.usage_page < 0xFF00:
+            continue
+        io = ReportIO(iface.path)
+        try:
+            with io:
+                vb = try_vendor_battery(vid_hex, io)
+        except Exception:
+            continue
+        if vb is not None:
+            return BatteryResult(
+                vidpid=vidpid, percent=vb.percent, source=f"vendor-{vb.source}",
+                detail=f"厂商协议 {vb.source}: {vb.detail}")
+    return None
 
 
 def _has_data(r: BatteryResult | None) -> bool:

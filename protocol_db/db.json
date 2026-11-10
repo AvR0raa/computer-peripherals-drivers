@@ -220,6 +220,31 @@
       "name_zh": "系统虚拟 HID",
       "internal": true,
       "note": "Virtual HID Framework 虚拟设备，非外设"
+    },
+    "373B": {
+      "name": "ATK",
+      "name_zh": "前行者/ATK",
+      "note": "电量协议已移植(EZ2.4G): ATK2=64B接口请求08 7D72..., 应答电量@[7]; ATK1=17B接口 0x55 校验, 电量@[6]"
+    },
+    "3554": {
+      "name": "attack shark",
+      "name_zh": "前行者",
+      "note": "ATK 协议同族（EZ2.4G 佐证）"
+    },
+    "3837": {
+      "name": "MCHOSE",
+      "name_zh": "迈从",
+      "note": "C-Media dongle 线; 电量协议已移植(EZ2.4G): 请求55 65 01, 应答电量@[2]"
+    },
+    "1837": {
+      "name": "MCHOSE",
+      "name_zh": "迈从",
+      "note": "同 3837"
+    },
+    "3654": {
+      "name": "MCHOSE",
+      "name_zh": "迈从",
+      "note": "同 3837"
     }
   },
   "pending_brands": [

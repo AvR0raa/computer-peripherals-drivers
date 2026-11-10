@@ -21,6 +21,30 @@ def qapp():
     yield app
 
 
+class _MemSettings:
+    """内存版 QSettings 替身，防止测试写真实注册表/互相污染。"""
+
+    _store = {}
+
+    def __init__(self, *a, **k):
+        pass
+
+    def value(self, key, default=None, **k):
+        return self._store.get(key, default)
+
+    def setValue(self, key, value):
+        self._store[key] = value
+
+    def clear(self):
+        self._store.clear()
+
+
+@pytest.fixture(autouse=True)
+def isolated_settings(monkeypatch):
+    _MemSettings._store.clear()
+    monkeypatch.setattr(gui_mod, "QSettings", _MemSettings)
+
+
 @pytest.fixture
 def window(qapp, monkeypatch):
     monkeypatch.setattr(dm, "list_devices", lambda: [
