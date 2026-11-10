@@ -75,7 +75,7 @@ from core.report_io import ReportIO, execute_feature
 from core.safe_write import safe_write
 from core.wizard import build_drafts, build_protocol_block, merge_into_db
 
-APP_VERSION = "v0.8.0"
+APP_VERSION = "v0.8.1"
 
 STATUS_COLOR = {
     DeviceStatus.KNOWN: QColor("#2ecc71"),
@@ -169,6 +169,19 @@ QToolTip { background: #1C2333; color: #F0F4FA; border: 1px solid #2A3547; }
 
 _TYPE_ICONS = {"鼠标": "\U0001F5B1\uFE0F", "键盘": "\u2328\uFE0F", "耳机": "\U0001F3A7",
                "接收器": "\U0001F4E1", "音频设备": "\U0001F3A7", "外设": "\U0001F50C"}
+
+
+RECEIVER_PIDS = {"C54D", "C232", "1B65"}   # 已知接收器 PID（罗技 Unifying/Lightspeed、海盗船）
+
+
+def _connection_text(key: str, ifaces: list) -> str:
+    """有线/无线标识：接收器=无线，其余罗技设备=有线直连。"""
+    vidpid = key[:4]
+    if vidpid == "046D" and key[5:] in RECEIVER_PIDS:
+        return "无线接收器"
+    if vidpid == "046D":
+        return "有线"
+    return ""
 
 
 def _type_info(key: str, ifaces: list, entry: dict | None) -> tuple[str, str]:
@@ -530,7 +543,9 @@ class MainWindow(QMainWindow):
         v.addLayout(head)
 
         brand = result.brand_zh or result.brand or "未知品牌"
-        sub = QLabel(f"{brand} · {type_name} · {len(ifaces)} 接口")
+        conn = _connection_text(key, ifaces)
+        conn_text = f" · {conn}" if conn else ""
+        sub = QLabel(f"{brand} · {type_name}{conn_text} · {len(ifaces)} 接口")
         sub.setObjectName("cardSub")
         v.addWidget(sub)
 

@@ -710,6 +710,118 @@
       "note": "",
       "source": "usb.ids 041E 块",
       "verified": false
+    },
+    "046D:C09B": {
+      "brand": "Logitech",
+      "product": "G PRO X Superlight 2 (有线模式)",
+      "type": "鼠标",
+      "note": "WPID 40A9；有线直插时 HID++ 走 0xFF 直连（Solaar #2207）",
+      "source": "usb.ids/Solaar #2207",
+      "verified": false
+    },
+    "046D:C083": {
+      "brand": "Logitech",
+      "product": "G403 Prodigy",
+      "type": "鼠标",
+      "note": "有线；HID++ 2.0",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:C084": {
+      "brand": "Logitech",
+      "product": "G203",
+      "type": "鼠标",
+      "note": "有线",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "046D:C24A": {
+      "brand": "Logitech",
+      "product": "G600",
+      "type": "鼠标",
+      "note": "有线 MMO",
+      "source": "usb.ids 046D 块",
+      "verified": false
+    },
+    "373B:1278": {
+      "brand": "ATK",
+      "product": "Dragonfly A9 MINI",
+      "type": "鼠标",
+      "note": "ATK 协议电量已移植（usage_page FF05 64B / FF02 17B）",
+      "source": "EZ2.4G DEVICES 表",
+      "verified": false
+    },
+    "373B:128E": {
+      "brand": "ATK",
+      "product": "ATK 无线鼠标",
+      "type": "鼠标",
+      "note": "ATK 协议",
+      "source": "EZ2.4G DEVICES 表",
+      "verified": false
+    },
+    "373B:1216": {
+      "brand": "ATK",
+      "product": "ATK 无线鼠标",
+      "type": "鼠标",
+      "note": "ATK 协议",
+      "source": "EZ2.4G DEVICES 表",
+      "verified": false
+    },
+    "3554:1216": {
+      "brand": "attack shark",
+      "product": "attack shark 鼠标",
+      "type": "鼠标",
+      "note": "ATK 协议同族",
+      "source": "EZ2.4G DEVICES 表",
+      "verified": false
+    },
+    "3837:600D": {
+      "brand": "MCHOSE",
+      "product": "V9 Turbo dongle",
+      "type": "耳机",
+      "note": "MCHOSE 0x55/0x65 电量协议已移植",
+      "source": "EZ2.4G DEVICES 表",
+      "verified": false
+    },
+    "1837:600D": {
+      "brand": "MCHOSE",
+      "product": "V9 Turbo dongle",
+      "type": "耳机",
+      "note": "同 3837",
+      "source": "EZ2.4G DEVICES 表",
+      "verified": false
+    },
+    "3654:6901": {
+      "brand": "MCHOSE",
+      "product": "MCHOSE dongle",
+      "type": "耳机",
+      "note": "同 3837",
+      "source": "EZ2.4G DEVICES 表",
+      "verified": false
+    },
+    "1532:008A": {
+      "brand": "Razer",
+      "product": "Viper Mini",
+      "type": "鼠标",
+      "note": "OpenRazer 支持",
+      "source": "usb.ids 1532 块",
+      "verified": false
+    },
+    "1B1C:1B5E": {
+      "brand": "Corsair",
+      "product": "Harpoon Wireless",
+      "type": "鼠标",
+      "note": "iCUESDK/OpenRGB 线索",
+      "source": "usb.ids 1B1C 块",
+      "verified": false
+    },
+    "1B1C:1B65": {
+      "brand": "Corsair",
+      "product": "Harpoon Wireless Dongle",
+      "type": "鼠标",
+      "note": "接收器",
+      "source": "usb.ids 1B1C 块",
+      "verified": false
     }
   }
 }

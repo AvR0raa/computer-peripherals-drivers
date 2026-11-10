@@ -3,7 +3,7 @@
 
 #define MyAppName "外设万能调试器"
 #define MyAppNameEn "PeripheralTool"
-#define MyAppVersion "0.8.0"
+#define MyAppVersion "0.8.1"
 #define MyAppPublisher "AvR0raa"
 #define MyAppURL "https://github.com/AvR0raa/computer-peripherals-drivers"
 #define MyAppExeName "PeripheralTool.exe"

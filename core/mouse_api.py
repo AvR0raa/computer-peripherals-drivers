@@ -92,7 +92,7 @@ class LogitechBackend(MouseBackend):
 
     def __init__(self):
         self._link: HidppLink | None = None
-        self._dev = 1                     # 接收器默认槽位 1；直连设备在 build 时改 0xFF
+        self._dev_resolved: int | None = None   # 惰性探测：0xFF=有线直连 / 1-7=接收器槽位
         self._dpi_cache: list[int] = []
 
     def matches(self, vid_hex: str, ifaces: list) -> bool:
@@ -100,33 +100,55 @@ class LogitechBackend(MouseBackend):
             f"{d.usage_page:04X}" == "FF00" for d in ifaces)
 
     def build(self, ifaces: list) -> None:
+        """只建链路，不猜设备索引——有线直连(0xFF)与接收器槽位在首次使用时探测。"""
         short = next((d for d in ifaces
                       if f"{d.usage_page:04X}" == "FF00" and f"{d.usage:04X}" == "0001"), None)
         long_if = next((d for d in ifaces
                         if f"{d.usage_page:04X}" == "FF00" and f"{d.usage:04X}" == "0002"), None)
         self._link = HidppLink(short.path if short else None,
                                long_if.path if long_if else None)
-        if long_if is None:
-            self._dev = 0xFF              # 无长通道的直连设备走 0xFF
-        else:
-            self._dev = 1                 # 接收器配对设备走槽位 1（多槽位设备后续扩展）
+        self._dev_resolved = None
+
+    def _dev(self) -> int | None:
+        """自动探测 HID++ 设备索引：先 0xFF（有线直连/接收器自身），再槽位 1-7。
+
+        有线鼠标（如 PRO X2 有线模式 C09B）直插时必须走 0xFF；
+        无线配对设备走槽位。探测一次后缓存。
+        """
+        if self._dev_resolved is not None:
+            return self._dev_resolved
+        if self._link is None:
+            return None
+        from core.hidpp import ping
+        for cand in (0xFF, 1, 2, 3, 4, 5, 6, 7):
+            state, _ = ping(self._link, cand, timeout_ms=400)
+            if state in ("2.0", "1.0"):
+                self._dev_resolved = cand
+                return cand
+        return None
 
     def _online(self, attempts: int = 10) -> bool:
-        return self._link is not None and ensure_online(
-            self._link, self._dev, attempts=attempts) is not None
+        if self._link is None:
+            return False
+        return ensure_online(self._link, self._dev or 1, attempts=attempts) is not None
 
     def capabilities(self) -> MouseCapabilities:
         caps = MouseCapabilities()
         if self._link is None:
             return caps
         with self._link:
+            self._dev_resolved = None
+            dev = self._dev()
+            if dev is None:
+                caps.notes.append("接收器上没有配对/在线设备（睡眠时请移动鼠标，HID++ 流量会唤醒）")
+                return caps
             if not self._online():
                 caps.notes.append("设备不在线（睡眠时请移动鼠标，HID++ 流量会唤醒）")
                 return caps
-            self._dpi_cache = get_dpi_list(self._link, self._dev)
+            self._dpi_cache = get_dpi_list(self._link, self._dev() or 1)
             caps.dpi_list = self._dpi_cache
             caps.dpi_support = bool(caps.dpi_list)
-            caps.poll_rates = get_poll_rates(self._link, self._dev)
+            caps.poll_rates = get_poll_rates(self._link, self._dev() or 1)
             caps.poll_support = bool(caps.poll_rates)
         if not caps.dpi_support:
             caps.notes.append("未发现 DPI feature（可能开启板载配置档，需 G HUB 切 Host 模式）")
@@ -134,26 +156,26 @@ class LogitechBackend(MouseBackend):
 
     def get_dpi(self):
         with self._link:
-            return read_dpi(self._link, self._dev)
+            return read_dpi(self._link, self._dev() or 1)
 
     def set_dpi(self, value: int) -> DpiOutcome:
         with self._link:
-            outcome = set_dpi(self._link, self._dev, value)
+            outcome = set_dpi(self._link, self._dev() or 1, value)
         return DpiOutcome(ok=outcome.ok, wrote=outcome.wrote,
                           readback=outcome.readback,
                           rolled_back=outcome.rolled_back, log=outcome.log)
 
     def get_poll_rate(self) -> int | None:
         with self._link:
-            return read_poll_rate(self._link, self._dev)
+            return read_poll_rate(self._link, self._dev() or 1)
 
     def set_poll_rate(self, hz: int) -> tuple[bool, str]:
         with self._link:
-            return set_poll_rate(self._link, self._dev, hz)
+            return set_poll_rate(self._link, self._dev() or 1, hz)
 
     def get_battery(self) -> BatteryResult | None:
         with self._link:
-            b = read_battery(self._link, self._dev)
+            b = read_battery(self._link, self._dev() or 1)
         if b is None:
             return None
         return BatteryResult(vidpid="", percent=b.percent, voltage_mv=b.voltage_mv,
