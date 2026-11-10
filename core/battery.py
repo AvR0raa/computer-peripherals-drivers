@@ -37,32 +37,49 @@ class BatteryResult:
         return "?"
 
 
+# EZ2.4G 实测常用电量 usage 对（标准 HID 之外的厂商习惯用法）+ Battery System 页
+_BATTERY_USAGE_PAIRS = {(0x0006, 0x0020), (0x000D, 0x003B), (0x0085, 0x0065)}
+
+
 def find_battery_fields(descriptor: bytes) -> list[ReportField]:
-    """描述符里 usage page 0x85 (Battery System) 的可读字段。"""
+    """描述符里可读电量字段：Battery System 页(0x85) + EZ2.4G 实测 usage 对。"""
     info = parse_report_descriptor(descriptor)
-    return [
-        f for f in info.fields
-        if f.usage is not None and (f.usage >> 16) == BATTERY_USAGE_PAGE
-        and not f.is_constant
-    ]
+    out = []
+    for f in info.fields:
+        if f.is_constant or f.usage is None:
+            continue
+        pair = (f.usage >> 16, f.usage & 0xFFFF)
+        if (f.usage >> 16) == BATTERY_USAGE_PAGE or pair in _BATTERY_USAGE_PAIRS:
+            out.append(f)
+    return out
+
+
+def _scale_percent(field: ReportField, raw: int) -> int | None:
+    """按字段逻辑范围缩放到 0-100；无范围或已近似百分比则原样钳制。"""
+    lo, hi = field.logical_min, field.logical_max
+    if lo is not None and hi is not None and hi > lo and not (lo == 0 and hi == 100):
+        scaled = (raw - lo) * 100 / (hi - lo)
+        return max(0, min(100, round(scaled)))
+    return max(0, min(100, raw)) if 0 <= raw <= 100 else raw
 
 
 def read_standard_battery(io: ReportIO, fields: list[ReportField]) -> tuple[int | None, str]:
     """读标准 HID 电量字段：feature 字段直接读，input 字段等 200ms 推送。
 
-    返回 (原始值, 说明)。读不到返回 (None, 原因)。
+    返回 (百分比 | 原始值, 说明)。读不到返回 (None, 原因)。
     """
     feature_field = next((f for f in fields if f.report_type == "feature"), None)
     if feature_field is not None:
         data = io.get_feature(feature_field.report_id, 16)
         if data and len(data) > 1:
-            # 原始值取字段覆盖的首字节（报告值通常 0-100 或档位）
             offset_byte = feature_field.offset // 8
             body = data[1:] if feature_field.report_id else data
             if offset_byte < len(body):
-                return body[offset_byte], (
-                    f"标准HID电量页 usage=0x{feature_field.usage & 0xFFFF:04X} "
-                    f"raw={body[offset_byte]} (report id={feature_field.report_id})")
+                raw = body[offset_byte]
+                pct = _scale_percent(feature_field, raw)
+                detail = (f"标准HID电量 usage=0x{feature_field.usage & 0xFFFF:04X} "
+                          f"raw={raw}" + (f" → {pct}%" if pct != raw else ""))
+                return pct, detail
         return None, "标准HID电量字段读取失败（可能为写触发型）"
 
     input_field = next((f for f in fields if f.report_type == "input"), None)
@@ -71,7 +88,8 @@ def read_standard_battery(io: ReportIO, fields: list[ReportField]) -> tuple[int 
         if data:
             value = data[input_field.offset // 8] if (input_field.offset // 8) < len(data) else None
             if value is not None:
-                return value, f"标准HID电量页 input 推送 raw={value}"
+                pct = _scale_percent(input_field, value)
+                return pct, f"标准HID电量页 input 推送 raw={value}"
         return None, "标准HID电量字段存在但 200ms 内无推送"
     return None, "无可读电量字段"
 

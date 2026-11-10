@@ -32,6 +32,8 @@ class ReportField:
     usages: tuple[int, ...] = ()        # 全部已解析 usage（Usage 列表可能多于一个）
     usage_min: int | None = None        # 数组型字段范围（已按当前 Usage Page 解析）
     usage_max: int | None = None
+    logical_min: int | None = None      # 逻辑范围（电量值缩放到百分比用）
+    logical_max: int | None = None
     flags: int = 0          # 主条目原始 flags（bit0 Data/Const, bit1 Array/Var, bit2 Abs/Rel）
     is_constant: bool = False
 
@@ -158,6 +160,8 @@ def parse_report_descriptor(data: bytes) -> DescriptorInfo:
     g_report_size = 0
     g_report_id = 0
     g_report_count = 0
+    g_logical_min = None
+    g_logical_max = None
     g_stack: list[tuple] = []
 
     # --- 局部条目状态（每个主条目后清零） ---
@@ -216,6 +220,8 @@ def parse_report_descriptor(data: bytes) -> DescriptorInfo:
                     usages=resolved,
                     usage_min=resolved_min,
                     usage_max=resolved_max,
+                    logical_min=g_logical_min,
+                    logical_max=g_logical_max,
                     flags=_unsigned(payload),
                     is_constant=bool(_unsigned(payload) & 0x1),
                 )
@@ -256,6 +262,10 @@ def parse_report_descriptor(data: bytes) -> DescriptorInfo:
                 g_page = _unsigned(payload)
                 info.usage_pages.add(g_page)
                 info.has_vendor_page = info.has_vendor_page or g_page >= 0xFF00
+            elif tag == 0x1:                    # Logical Minimum（有符号）
+                g_logical_min = _signed(payload)
+            elif tag == 0x2:                    # Logical Maximum（有符号）
+                g_logical_max = _signed(payload)
             elif tag == 0x7:                    # Report Size
                 g_report_size = _unsigned(payload)
             elif tag == 0x8:                    # Report ID
@@ -263,10 +273,12 @@ def parse_report_descriptor(data: bytes) -> DescriptorInfo:
             elif tag == 0x9:                    # Report Count
                 g_report_count = _unsigned(payload)
             elif tag == 0xA:                    # Push
-                g_stack.append((g_page, g_report_size, g_report_id, g_report_count))
+                g_stack.append((g_page, g_report_size, g_report_id, g_report_count,
+                                g_logical_min, g_logical_max))
             elif tag == 0xB:                    # Pop
                 if g_stack:
-                    (g_page, g_report_size, g_report_id, g_report_count) = g_stack.pop()
+                    (g_page, g_report_size, g_report_id, g_report_count,
+                     g_logical_min, g_logical_max) = g_stack.pop()
             # 0x1-0x6（Logical/Physical Min/Max、Unit、Exponent）M1 显示层暂不需要，
             # 解析但仅保留在局部变量之外不输出；为简单起见直接跳过。
             # 保留位 tag 0xC-0xF 忽略。

@@ -69,13 +69,13 @@ from core.profiles import (
     load_profile,
     save_profile,
 )
-from core.hidpp import HidppLink, ensure_online
+from core.hidpp import HidppLink, ensure_online, get_poll_rates, read_poll_rate, set_poll_rate
 from core.recorder import Recorder, RecorderTarget
 from core.report_io import ReportIO, execute_feature
 from core.safe_write import safe_write
 from core.wizard import build_drafts, build_protocol_block, merge_into_db
 
-APP_VERSION = "v0.6.3"
+APP_VERSION = "v0.8.0"
 
 STATUS_COLOR = {
     DeviceStatus.KNOWN: QColor("#2ecc71"),
@@ -220,6 +220,18 @@ class DpiDialog(QDialog):
         self._info.setStyleSheet("color:#6B7280; font-size:12px;")
         layout.addWidget(self._info)
 
+        rate_row = QHBoxLayout()
+        rate_label = QLabel("报告率：")
+        self._rate_combo = QComboBox()
+        self._rate_combo.addItem("—", None)
+        rate_apply = QPushButton("应用报告率")
+        rate_apply.setObjectName("ghostBtn")
+        rate_apply.clicked.connect(self._apply_rate)
+        rate_row.addWidget(rate_label)
+        rate_row.addWidget(self._rate_combo, 1)
+        rate_row.addWidget(rate_apply)
+        layout.addLayout(rate_row)
+
         btns = QHBoxLayout()
         apply_btn = QPushButton("应用 DPI")
         apply_btn.clicked.connect(self._apply)
@@ -264,7 +276,9 @@ class DpiDialog(QDialog):
                     return None, "设备不在线（请动一动鼠标再试）"
                 dpi, dpi_y, lod, default = read_dpi(link, slot)
                 lst = get_dpi_list(link, slot)
-            return (dpi, dpi_y, lod, default, lst), None
+                current_rate = read_poll_rate(link, slot)
+                rates = get_poll_rates(link, slot)
+            return (dpi, dpi_y, lod, default, lst, current_rate, rates), None
 
         worker = Worker(job, self)
 
@@ -273,7 +287,7 @@ class DpiDialog(QDialog):
             if status != "ok" or value[1]:
                 self._status.setText(value if status != "ok" else value[1])
                 return
-            dpi, dpi_y, lod, default, lst = value[0]
+            dpi, dpi_y, lod, default, lst, current_rate, rates = value[0]
             if dpi is None:
                 self._status.setText("读取失败（设备可能睡眠中，动一动鼠标再试）")
                 return
@@ -282,9 +296,46 @@ class DpiDialog(QDialog):
                 self._slider.setRange(lst[0], lst[-1])
                 self._spin.setRange(lst[0], lst[-1])
                 self._info.setText(f"支持 {len(lst)} 档（{lst[0]}–{lst[-1]}）")
+            self._rate_combo.clear()
+            if rates:
+                for hz in rates:
+                    self._rate_combo.addItem(f"{hz} Hz", hz)
+                if current_rate in rates:
+                    self._rate_combo.setCurrentText(f"{current_rate} Hz")
+            else:
+                self._rate_combo.addItem("设备不支持", None)
             extra = f" · Y轴 {dpi_y}" if dpi_y else ""
             extra += f" · LOD {lod}" if lod is not None else ""
-            self._status.setText(f"✅ 当前 {dpi} DPI{extra}")
+            rate_text = f" · 报告率 {current_rate}Hz" if current_rate else ""
+            self._status.setText(f"✅ 当前 {dpi} DPI{extra}{rate_text}")
+
+        worker.done.connect(done)
+        self._track(worker)
+        worker.start()
+
+    def _apply_rate(self):
+        hz = self._rate_combo.currentData()
+        if not hz:
+            self._status.setText("设备不支持报告率调节")
+            return
+        slot = self._slot()
+        self._status.setText(f"应用报告率 {hz}Hz 中…（读回验证）")
+
+        def job():
+            link = self._build_link()
+            if link is None:
+                return "未找到 HID++ 接口"
+            with link:
+                if ensure_online(link, slot, attempts=6) is None:
+                    return "设备不在线（请动一动鼠标再试）"
+                ok, msg = set_poll_rate(link, slot, hz)
+            return ("✅ " if ok else "❌ ") + msg
+
+        worker = Worker(job, self)
+
+        def done(payload):
+            status, value = payload
+            self._status.setText(value if status == "ok" else f"出错: {value}")
 
         worker.done.connect(done)
         self._track(worker)

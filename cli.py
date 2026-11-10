@@ -21,7 +21,14 @@ if hasattr(sys.stdout, "reconfigure"):
 import core.device_manager as dm
 from core.battery import scan_all
 from core.descriptor import parse_report_descriptor, summary
-from core.hidpp import HidppLink, ensure_online, read_battery
+from core.hidpp import (
+    HidppLink,
+    ensure_online,
+    get_poll_rates,
+    read_battery,
+    read_poll_rate,
+    set_poll_rate,
+)
 from core.dpi import get_dpi_list, read_dpi
 from core.fingerprint import (
     DEFAULT_DB_PATH,
@@ -226,8 +233,18 @@ def cmd_mouse(args) -> int:
             print("DPI: 读取失败（0x2201/0x2202 均无响应）")
         lst = get_dpi_list(link, dev)
         if lst:
-            print(f"档位表: {len(lst)} 档，{lst[0]} - {lst[-1]}"
-                  + ("（板载配置档开启时写入可能不生效，需在 G HUB 切 Host 模式）" if args.set is None else ""))
+            print(f"档位表: {len(lst)} 档，{lst[0]} - {lst[-1]}")
+        rate = read_poll_rate(link, dev)
+        rates = get_poll_rates(link, dev)
+        if rate:
+            print(f"报告率: {rate}Hz" + (f"（支持 {rates}）" if rates else ""))
+        if args.rate is not None:
+            print("")
+            print(f"设置报告率 → {args.rate}Hz …")
+            ok, msg = set_poll_rate(link, dev, args.rate)
+            print("  " + ("✅ " if ok else "❌ ") + msg)
+            if not ok:
+                return 1
         b = read_battery(link, dev)
         if b:
             print(f"电量: {b.percent if b.percent is not None else b.display} "
@@ -265,6 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mouse = sub.add_parser("mouse", help="罗技鼠标报告（唤醒/DPI/电量）+ 可选设置 DPI")
     p_mouse.add_argument("--slot", type=int, default=1, help="接收器槽位 1-7（0=直连 0xFF）")
     p_mouse.add_argument("--set", type=int, default=None, help="设置 DPI 到指定值（可选）")
+    p_mouse.add_argument("--rate", type=int, default=None, help="设置报告率 Hz（125/250/500/1000/2000/4000/8000）")
     return parser
 
 

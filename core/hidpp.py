@@ -35,6 +35,12 @@ FEATURE_BATTERY_VOLTAGE = 0x1001
 FEATURE_UNIFIED_BATTERY = 0x1004
 FEATURE_ADJUSTABLE_DPI = 0x2201
 FEATURE_EXTENDED_ADJUSTABLE_DPI = 0x2202
+FEATURE_REPORT_RATE = 0x8060
+FEATURE_EXTENDED_REPORT_RATE = 0x8061
+
+# 0x8061 Extended Report Rate: 索引式档位（Solaar ExtendedReportRate choices_universe）
+POLL_RATE_BY_INDEX = {0: 125, 1: 250, 2: 500, 3: 1000, 4: 2000, 5: 4000, 6: 8000}
+POLL_INDEX_BY_HZ = {v: k for k, v in POLL_RATE_BY_INDEX.items()}
 
 # BatteryStatus 语义（Solaar hidpp20_constants.BatteryStatus 子集）
 STATUS_NAMES = {0: "放电中", 1: "充电中", 2: "接近充满", 4: "已充满", 5: "电量不足(?)"}
@@ -197,6 +203,70 @@ def ensure_online(link, dev: int, attempts: int = 8, interval: float = 1.2,
         if attempts > 1:
             _time.sleep(interval)
     return None
+
+
+# ---------------------------------------------------------------------------
+# 报告率（0x8060 基础版 / 0x8061 扩展版，Solaar ReportRate + ExtendedReportRate）
+# ---------------------------------------------------------------------------
+
+def get_poll_rates(link, dev: int, timeout_ms: int = 500) -> list[int]:
+    """支持的报告率列表（Hz，从高到低）。不支持返回 []。"""
+    idx = get_feature_index(link, dev, FEATURE_EXTENDED_REPORT_RATE, timeout_ms)
+    if idx:
+        payload = _call_feature(link, dev, idx, 0x10, timeout_ms=timeout_ms)
+        if payload is not None and len(payload) >= 2:
+            flags = payload[0] | (payload[1] << 8)
+            rates = [POLL_RATE_BY_INDEX[i] for i in range(7) if (flags >> i) & 0x01]
+            return sorted(rates, reverse=True)
+    idx = get_feature_index(link, dev, FEATURE_REPORT_RATE, timeout_ms)
+    if idx:
+        payload = _call_feature(link, dev, idx, 0x00, timeout_ms=timeout_ms)
+        if payload is not None and len(payload) >= 1:
+            flags = payload[0]
+            rates = [1000 // (i + 1) for i in range(8) if (flags >> i) & 0x01]
+            return sorted(rates, reverse=True)
+    return []
+
+
+def read_poll_rate(link, dev: int, timeout_ms: int = 500) -> int | None:
+    """当前报告率（Hz）。不支持返回 None。"""
+    idx = get_feature_index(link, dev, FEATURE_EXTENDED_REPORT_RATE, timeout_ms)
+    if idx:
+        payload = _call_feature(link, dev, idx, 0x20, timeout_ms=timeout_ms)
+        if payload is not None and len(payload) >= 1:
+            return POLL_RATE_BY_INDEX.get(payload[0])
+    idx = get_feature_index(link, dev, FEATURE_REPORT_RATE, timeout_ms)
+    if idx:
+        payload = _call_feature(link, dev, idx, 0x10, timeout_ms=timeout_ms)
+        if payload is not None and len(payload) >= 1 and payload[0]:
+            return 1000 // payload[0]        # 基础版: 字节 = ms
+    return None
+
+
+def set_poll_rate(link, dev: int, hz: int, timeout_ms: int = 600) -> tuple[bool, str]:
+    """设置报告率；读回验证。返回 (是否成功, 说明)。"""
+    rates = get_poll_rates(link, dev, timeout_ms)
+    if not rates:
+        return False, "设备不支持报告率调节（0x8060/0x8061 均无）"
+    if hz not in rates:
+        return False, f"报告率 {hz}Hz 不在支持列表 {rates}"
+    idx = get_feature_index(link, dev, FEATURE_EXTENDED_REPORT_RATE, timeout_ms)
+    if idx:
+        index = POLL_INDEX_BY_HZ[hz]
+        payload = _call_feature(link, dev, idx, 0x30, bytes([index]), timeout_ms)
+        confirm = read_poll_rate(link, dev, timeout_ms)
+        if confirm == hz:
+            return True, f"报告率已设为 {hz}Hz（读回验证通过）"
+        return False, f"验证失败：读回 {confirm}Hz（板载配置档开启时写入可能不生效）"
+    idx = get_feature_index(link, dev, FEATURE_REPORT_RATE, timeout_ms)
+    if idx:
+        ms = 1000 // hz
+        _call_feature(link, dev, idx, 0x20, bytes([ms]), timeout_ms)
+        confirm = read_poll_rate(link, dev, timeout_ms)
+        if confirm == hz:
+            return True, f"报告率已设为 {hz}Hz（读回验证通过）"
+        return False, f"验证失败：读回 {confirm}Hz"
+    return False, "无可用报告率 feature"
 
 
 def read_battery(io: ReportIO, dev: int = 0xFF, timeout_ms: int = 500) -> HidppBattery | None:
