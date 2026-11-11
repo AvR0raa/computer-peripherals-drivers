@@ -1,6 +1,7 @@
 // main_window.cpp — 用户客户端主窗口实现（gui.py MainWindow 平移）。
 #include "main_window.hpp"
 
+#include "migration_dialog.hpp"
 #include "tray.hpp"
 
 #include <QContextMenuEvent>
@@ -282,6 +283,11 @@ void MainWindow::open_dpi(const QString& key) {
                                 ? "鼠标"
                                 : qstr(it->second.front().product);
     DpiDialog dlg(this, key, it->second, product);
+    dlg.exec();
+}
+
+void MainWindow::open_migration() {
+    MigrationDialog dlg(this);
     dlg.exec();
 }
 

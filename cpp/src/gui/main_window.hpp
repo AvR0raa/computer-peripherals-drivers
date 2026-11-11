@@ -33,6 +33,7 @@ public:
     const std::map<QString, pt::BatteryResult>& battery_cache() const { return battery_cache_; }
     void on_battery_all();
     void refresh_devices();
+    void open_migration();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
