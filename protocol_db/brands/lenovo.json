@@ -1,0 +1,16 @@
+{
+  "$schema": "protocol-db/v2",
+  "brands": {
+    "17EF": {
+      "name": "Lenovo",
+      "name_zh": "联想",
+      "note": "拯救者外设（键盘/鼠标/耳机）具体 VID:PID 待插机实测",
+      "official": {
+        "software": "联想电脑管家/拯救者控制中心",
+        "url": "https://support.lenovo.com/"
+      }
+    }
+  },
+  "devices": {},
+  "_comment": "品牌文件（一品牌一文件）。VID 来源: usb.ids（Lenovo 17EF）；外设条目待实测"
+}

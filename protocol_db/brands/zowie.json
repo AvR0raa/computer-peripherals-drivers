@@ -1,0 +1,35 @@
+{
+  "$schema": "protocol-db/v2",
+  "brands": {
+    "1AF3": {
+      "name": "ZOWIE (Kingsis)",
+      "name_zh": "卓威",
+      "note": "Kingsis Technology = ZOWIE 前身/OEM（usb.ids）",
+      "official": {}
+    },
+    "3057": {
+      "name": "ZOWIE (Kingsis)",
+      "name_zh": "卓威",
+      "note": "同 1AF3"
+    }
+  },
+  "devices": {
+    "1AF3:0001": {
+      "brand": "ZOWIE (Kingsis)",
+      "product": "ZOWIE Gaming Mouse",
+      "type": "鼠标",
+      "note": "卓威鼠标（Kingsis 线）",
+      "source": "usb.ids 1AF3 块",
+      "verified": false
+    },
+    "3057:0002": {
+      "brand": "ZOWIE (Kingsis)",
+      "product": "ZOWIE Gaming Mouse",
+      "type": "鼠标",
+      "note": "卓威鼠标（Kingsis 线）",
+      "source": "usb.ids 3057 块",
+      "verified": false
+    }
+  },
+  "_comment": "品牌文件（一品牌一文件）。VID 来源: usb.ids（Kingsis/卓威）"
+}
