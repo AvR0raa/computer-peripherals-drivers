@@ -17,7 +17,17 @@ dist/
 # 学习模式录制会话（含本机设备数据，不入库）
 recordings/
 
+# 发布包：走 GitHub Releases，不进仓库树（历史 zip 同理）
+*.zip
+
+# C++ 构建产物
+cpp/build/
+cpp/build-release/
+
 # OS
 Thumbs.db
 .DS_Store
 profiles/**
+
+# 临时工具日志
+aqtinstall.log
