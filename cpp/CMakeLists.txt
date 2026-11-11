@@ -61,7 +61,8 @@ if(Qt6_FOUND)
                  src/gui/dpi_dialog.cpp
                  src/gui/main_window.cpp
                  src/gui/advanced_window.cpp
-                 src/gui/advanced_window2.cpp)
+                 src/gui/advanced_window2.cpp
+                 src/gui/tray.cpp)
   set_target_properties(gui PROPERTIES OUTPUT_NAME PeripheralTool)
   target_include_directories(gui PRIVATE src src/gui)
   target_link_libraries(gui PRIVATE pt_core Qt6::Widgets)

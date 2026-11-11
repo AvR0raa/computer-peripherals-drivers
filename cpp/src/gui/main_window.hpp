@@ -19,10 +19,20 @@ class QScrollArea;
 
 class AdvancedWindow;
 
+namespace pt::gui {
+class TrayController;   // tray.hpp（M-C4 托盘常驻）
+}
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     MainWindow();
+
+    // 托盘（TrayController）使用：读设备/电量缓存 + 触发扫描
+    const std::map<QString, std::vector<pt::DeviceInfo>>& devices() const { return devices_; }
+    const std::map<QString, pt::BatteryResult>& battery_cache() const { return battery_cache_; }
+    void on_battery_all();
+    void refresh_devices();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -32,12 +42,10 @@ private:
     void hide_device(const QString& key);
     void build_ui();
     QFrame* build_card(const QString& key);
-    void refresh_devices();
     void rebuild_cards();
     void show_card_menu(const QString& key, QFrame* card);
     void open_dpi(const QString& key);
     void open_advanced();
-    void on_battery_all();
     void start_watcher();
     void on_hotplug(const pt::DeviceEvent& event);
 
@@ -46,6 +54,7 @@ private:
     std::map<QString, pt::BatteryResult> battery_cache_;
     pt::gui::HotplugWatcher* watcher_ = nullptr;
     AdvancedWindow* advanced_ = nullptr;
+    pt::gui::TrayController* tray_ = nullptr;
     QSettings settings_;
     QGridLayout* grid_ = nullptr;
 };

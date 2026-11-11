@@ -1,6 +1,8 @@
 // main_window.cpp — 用户客户端主窗口实现（gui.py MainWindow 平移）。
 #include "main_window.hpp"
 
+#include "tray.hpp"
+
 #include <QContextMenuEvent>
 #include <QDateTime>
 #include <QFrame>
@@ -51,6 +53,7 @@ MainWindow::MainWindow() : settings_("AvR0raa", "peripheral-tool") {
     refresh_devices();
     on_battery_all();  // 开机自动读一轮电量
     start_watcher();
+    tray_ = new pt::gui::TrayController(this, this);   // 托盘常驻（M-C4 收尾）
 }
 
 void MainWindow::build_ui() {
@@ -339,6 +342,13 @@ void MainWindow::on_hotplug(const DeviceEvent& event) {
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     settings_.setValue("window/geometry", saveGeometry());
+    // 关窗 = 最小化到托盘（托盘菜单「退出」才真正退出）
+    if (tray_ && QSystemTrayIcon::isSystemTrayAvailable() &&
+        settings_.value("close_to_tray", true).toBool()) {
+        hide();
+        event->ignore();
+        return;
+    }
     if (watcher_) {
         watcher_->stop_watching();
         watcher_->wait(2000);
