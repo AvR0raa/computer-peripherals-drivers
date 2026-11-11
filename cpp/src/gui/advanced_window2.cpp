@@ -205,11 +205,64 @@ QWidget* AdvancedWindow::build_learn_tab() {
     learn_output_->setReadOnly(true);
     learn_output_->setFont(QFont("Consolas", 9));
     learn_output_->setPlaceholderText("差分分析结果…");
-    layout->addWidget(learn_output_, 1);
+    layout->addWidget(learn_output_, 2);
+
+    // ---- 写回放区（M4.5）：录到的报文限速写回 + 观察响应，全程可中止 ----
+    auto* replay_head = new QLabel("写回放（把录到的报文按限速写回接口，观察设备响应；未经协议库验证，谨慎使用）");
+    replay_head->setWordWrap(true);
+    layout->addWidget(replay_head);
+
+    auto* replay_row = new QHBoxLayout();
+    replay_row->addWidget(new QLabel("回放接口"));
+    replay_iface_ = new QComboBox();
+    replay_row->addWidget(replay_iface_, 1);
+    replay_row->addWidget(new QLabel("写入通道"));
+    replay_mode_ = new QComboBox();
+    replay_mode_->addItem("自动（input→output / feature→feature）");
+    replay_mode_->addItem("强制 output");
+    replay_mode_->addItem("强制 feature");
+    replay_row->addWidget(replay_mode_);
+    layout->addLayout(replay_row);
+
+    replay_list_ = new QListWidget();
+    replay_list_->setToolTip("勾选要写回的报文（默认全选，最多 200 条；input 回声按 output 写，feature 快照按 feature 写）");
+    replay_list_->setFixedHeight(110);
+    layout->addWidget(replay_list_);
+
+    auto* replay_ctl = new QHBoxLayout();
+    replay_ctl->addWidget(new QLabel("限速间隔(ms)"));
+    replay_interval_ = new QSpinBox();
+    replay_interval_->setRange(20, 5000);
+    replay_interval_->setValue(100);
+    replay_interval_->setToolTip("相邻两次写入之间的最小间隔（限速，防端点假死）");
+    replay_ctl->addWidget(replay_interval_);
+    replay_ctl->addWidget(new QLabel("响应窗口(ms)"));
+    replay_window_ = new QSpinBox();
+    replay_window_->setRange(0, 1000);
+    replay_window_->setValue(50);
+    replay_window_->setToolTip("每次写入后持续读 input 观察响应的时长");
+    replay_ctl->addWidget(replay_window_);
+    replay_ctl->addStretch(1);
+    replay_start_btn_ = new QPushButton("开始回放");
+    replay_stop_btn_ = new QPushButton("中止回放");
+    replay_stop_btn_->setEnabled(false);
+    replay_start_btn_->setEnabled(false);
+    connect(replay_start_btn_, &QPushButton::clicked, this, [this] { on_replay_start(); });
+    connect(replay_stop_btn_, &QPushButton::clicked, this, [this] { on_replay_stop(); });
+    connect(replay_iface_, &QComboBox::currentIndexChanged, this, [this] { refresh_replay_list(); });
+    replay_ctl->addWidget(replay_start_btn_);
+    replay_ctl->addWidget(replay_stop_btn_);
+    layout->addLayout(replay_ctl);
+
+    replay_status_ = new QLabel("（停止并分析后，这里出现可回放的报文）");
+    layout->addWidget(replay_status_);
 
     learn_timer_ = new QTimer(this);
     learn_timer_->setInterval(500);
     connect(learn_timer_, &QTimer::timeout, this, [this] { learn_tick(); });
+    replay_timer_ = new QTimer(this);
+    replay_timer_->setInterval(500);
+    connect(replay_timer_, &QTimer::timeout, this, [this] { replay_tick(); });
     return page;
 }
 
@@ -285,6 +338,14 @@ void AdvancedWindow::on_learn_start() {
     learn_recorder_->start();
     learn_mark_ts_.reset();
     learn_diffs_.clear();
+    learn_entries_.clear();
+    replayer_.reset();
+    replay_timer_->stop();
+    replay_list_->clear();
+    replay_iface_->clear();
+    replay_start_btn_->setEnabled(false);
+    replay_stop_btn_->setEnabled(false);
+    replay_status_->setText("录制中… 回放区在停止并分析后可用");
     learn_output_->clear();
     learn_start_btn_->setEnabled(false);
     learn_mark_btn_->setEnabled(true);
@@ -306,6 +367,7 @@ void AdvancedWindow::on_learn_stop() {
     learn_recorder_->stop();
     const auto entries = learn_recorder_->entries();
     learn_recorder_.reset();
+    learn_entries_ = entries;
     std::vector<CaptureEntry> before, after;
     if (!learn_mark_ts_) {
         after = entries;
@@ -329,6 +391,7 @@ void AdvancedWindow::on_learn_stop() {
         std::any_of(learn_diffs_.begin(), learn_diffs_.end(),
                     [](const GroupDiff& d) { return !d.is_volatile; });
     learn_commit_btn_->setEnabled(has_draft);
+    refresh_replay_sources();
 }
 
 void AdvancedWindow::on_learn_commit() {
@@ -376,6 +439,175 @@ void AdvancedWindow::on_learn_commit() {
     db_ = load_db(default_db_path());
     refresh_devices();
     learn_commit_btn_->setEnabled(false);
+}
+
+// ---------------------------------------------------------------------------
+// 写回放（M4.5）：录到的报文限速写回 + 观察响应
+// ---------------------------------------------------------------------------
+
+// replay_list_ 条目 UserRole ↔ CaptureEntry（与 learn_targets_ 同款序列化）
+static CaptureEntry capture_from_json(const Json& obj) {
+    return CaptureEntry{obj.at("ts").get<double>(), obj.at("source").get<std::string>(),
+                        obj.at("kind").get<std::string>(), obj.at("report_id").get<int>(),
+                        obj.at("data").get<std::string>()};
+}
+
+void AdvancedWindow::refresh_replay_sources() {
+    replay_iface_->blockSignals(true);
+    const QString prev = replay_iface_->currentText();
+    replay_iface_->clear();
+    // 只列有可回放条目的录制接口（input/feature_read 且有数据）
+    std::set<QString> sources;
+    for (const auto& e : learn_entries_)
+        if (action_from_capture(e)) sources.insert(qstr(e.source));
+    for (const auto& s : sources) replay_iface_->addItem(s);
+    if (!prev.isEmpty()) {
+        const int idx = replay_iface_->findText(prev);
+        if (idx >= 0) replay_iface_->setCurrentIndex(idx);
+    }
+    replay_iface_->blockSignals(false);
+    refresh_replay_list();
+}
+
+void AdvancedWindow::refresh_replay_list() {
+    replay_list_->clear();
+    if (replay_iface_->currentText().isEmpty()) return;
+    const std::string source = sstr(replay_iface_->currentText());
+    constexpr int REPLAY_MAX_ITEMS = 200;  // 噪声流保险丝：超出不再列出
+    int added = 0, seq = 0;
+    bool truncated = false;
+    for (const auto& e : learn_entries_) {
+        ++seq;
+        if (e.source != source) continue;
+        if (!action_from_capture(e)) continue;
+        if (added >= REPLAY_MAX_ITEMS) {
+            truncated = true;
+            break;
+        }
+        auto* item = new QListWidgetItem(QString("#%1  %2  %3").arg(seq).arg(
+            qstr(e.kind), qstr(e.data).left(47)));
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Checked);
+        Json info = Json::object();
+        info["ts"] = e.ts;
+        info["source"] = e.source;
+        info["kind"] = e.kind;
+        info["report_id"] = e.report_id;
+        info["data"] = e.data;
+        const QVariant v =
+            QVariant::fromValue(QByteArray::fromStdString(info.dump()));  // 序列化塞 UserRole
+        item->setData(Qt::UserRole, v);
+        replay_list_->addItem(item);
+        ++added;
+    }
+    replay_start_btn_->setEnabled(added > 0);
+    replay_status_->setText(truncated
+                                ? QString("报文较多：仅列出前 %1 条（噪声流建议勿整段回放）").arg(added)
+                                : QString("共 %1 条可回放报文，已全选").arg(added));
+}
+
+void AdvancedWindow::on_replay_start() {
+    if (replayer_) return;  // 回放中
+    const QString source = replay_iface_->currentText();
+    const auto meta_it = learn_label_meta_.find(source);
+    if (meta_it == learn_label_meta_.end()) {
+        replay_status_->setText("先录制一次再回放");
+        return;
+    }
+    // 写入通道：自动按条目 kind 映射；强制模式整体覆盖
+    const std::string force = replay_mode_->currentIndex() == 1   ? "output"
+                              : replay_mode_->currentIndex() == 2 ? "feature"
+                                                                  : "";
+    std::vector<ReplayAction> actions;
+    for (int idx = 0; idx < replay_list_->count(); ++idx) {
+        auto* item = replay_list_->item(idx);
+        if (item->checkState() != Qt::Checked) continue;
+        const QByteArray raw = item->data(Qt::UserRole).toByteArray();
+        const CaptureEntry entry = capture_from_json(Json::parse(raw.toStdString()));
+        auto action = action_from_capture(entry, sstr(QString("#%1").arg(idx + 1)));
+        if (!action) continue;
+        if (!force.empty()) action->mode = force;
+        actions.push_back(std::move(*action));
+    }
+    if (actions.empty()) {
+        replay_status_->setText("没有勾选可回放的报文");
+        return;
+    }
+    auto player = std::make_unique<Replayer>(meta_it->second.value("path", std::string()));
+    player->set_actions(std::move(actions));
+    player->set_min_interval_ms(replay_interval_->value());
+    player->set_response_window_ms(replay_window_->value());
+    try {
+        player->start();
+    } catch (const std::exception& exc) {
+        replay_status_->setText(QString("回放启动失败: %1").arg(exc.what()));
+        return;
+    }
+    replayer_ = std::move(player);
+    learn_output_->appendPlainText(
+        QString("── 写回放开始：接口 %1，%2 条，限速 %3ms，响应窗口 %4ms")
+            .arg(source, QString::number(replayer_->total_actions()),
+                 QString::number(replay_interval_->value()),
+                 QString::number(replay_window_->value())));
+    replay_start_btn_->setEnabled(false);
+    replay_stop_btn_->setEnabled(true);
+    replay_timer_->start();
+}
+
+void AdvancedWindow::on_replay_stop() {
+    if (replayer_) finalize_replay();
+}
+
+void AdvancedWindow::replay_tick() {
+    if (!replayer_) {
+        replay_timer_->stop();
+        return;
+    }
+    if (replayer_->is_running()) {
+        replay_status_->setText(QString("回放中… 已发送 %1/%2 条")
+                                    .arg(QString::number(replayer_->sent_count()),
+                                         QString::number(replayer_->total_actions())));
+        return;
+    }
+    finalize_replay();  // 线程已自然收尾：join 并汇总
+}
+
+void AdvancedWindow::finalize_replay() {
+    if (!replayer_) return;
+    replay_timer_->stop();
+    replayer_->stop();  // join
+    const auto events = replayer_->events();
+    const bool aborted = replayer_->aborted();
+    int writes = 0, responses = 0, errors = 0;
+    QStringList err_lines;
+    for (const auto& e : events) {
+        if (e.kind == "write") ++writes;
+        else if (e.kind == "response") ++responses;
+        else if (e.kind == "error") {
+            ++errors;
+            err_lines << "  " + qstr(e.data);
+        }
+    }
+    QStringList lines;
+    lines << QString("── 写回放结束（%1）：发送 %2/%3，响应 %4，错误 %5")
+                 .arg(aborted ? "被中止" : "完成", QString::number(writes),
+                      QString::number(replayer_->total_actions()), QString::number(responses),
+                      QString::number(errors));
+    for (const auto& l : err_lines) lines << l;
+    int listed = 0;
+    for (const auto& e : events) {
+        if (e.kind != "response") continue;
+        if (++listed > 16) {
+            lines << QString("  …共 %1 条响应").arg(responses);
+            break;
+        }
+        lines << QString("  响应 id=0x%1  %2").arg(qhex(e.report_id, 2), qstr(e.data));
+    }
+    learn_output_->appendPlainText(lines.join("\n"));
+    replay_status_->setText(aborted ? "回放已中止" : "回放完成");
+    replayer_.reset();
+    replay_start_btn_->setEnabled(true);
+    replay_stop_btn_->setEnabled(false);
 }
 
 // ---------------------------------------------------------------------------

@@ -43,13 +43,14 @@ cpp/
 ├── CMakeLists.txt            # pt_core / cli / gui / pt_tests 四个目标（Qt 缺席自动跳过 gui）
 ├── build.bat / build-release.bat / package.bat
 ├── src/
-│   ├── core/                 # ←→ Python core/*.py（一一对应）
+│   ├── core/                 # ←→ Python core/*.py（一一对应；replay 为 C++ 独有）
 │   │   ├── common.hpp        # Bytes/hex/占位符工具 + exe_dir（分发路径定位）
 │   │   ├── json_util.hpp     # Json(ordered)/Params/十六进制校验
 │   │   ├── descriptor.* / device_manager.* / hid_api.* / fingerprint.*
 │   │   ├── report_io.* / safe_write.* / hidpp.* / dpi.*
 │   │   ├── battery.* / vendor_battery.* / probe.*
 │   │   ├── recorder.* / diffing.* / wizard.* / profiles.*
+│   │   ├── replay.*          # M4.5 写回放（C++ 独有）：限速回放录到的报文+观察响应+可中止
 │   │   └── mouse_api.*       # 统一鼠标 API（Backend 模板层）
 │   ├── app/main_cli.cpp      # ←→ cli.py（list/info/watch/battery/mouse）
 │   ├── app/main_gui.cpp      # ←→ gui.py main（metatype 注册）
@@ -61,7 +62,7 @@ cpp/
 │       ├── main_window.*     # 用户端：单页设备卡片墙（电量+DPI+隐藏设备）
 │       └── advanced_window.* # 高级端：总览/设备/学习模式 三标签页
 │                            #   （动态协议控件/DPI面板/档案/批量探测/学习入库全保留）
-├── tests/                    # ←→ tests/test_*.py（doctest，180 用例 1070 断言）
+├── tests/                    # ←→ tests/test_*.py（doctest，189 用例 1124 断言）
 └── third_party/              # hidapi 源码 / nlohmann-json / doctest
 ```
 
@@ -90,3 +91,10 @@ cpp/
 - 真机（Windows 11，26 个 HID 接口）：`list`/`list --json`/`info --desc`/`battery` 正常；杰理协议在 3654:6901 实测读到 90% 电量
 - GUI：Debug/Release 均编译零告警；干净 PATH 下独立启动烟测通过（卡片墙 + 设备枚举 + 热插拔线程）
 - 分发：zip（13.7MB）与 Inno Setup 安装包（11.6MB）均生成并验证；cli.exe 纯系统依赖可直接运行
+
+## 已验证（2026-11-12，M4.5 写回放追加）
+
+- `pt_tests.exe`：189 用例 / 1124 断言全绿（Debug 与 Release 双配置；新增 core/replay 9 用例）
+- GUI：学习页新增写回放区（接口选择/报文勾选/限速/响应窗口/开始-中止）；
+  `PeripheralTool.exe --advanced` 可直达高级窗口（烟测用它离屏验证学习页构建）
+- 真机回放验收（rawhid 通道按限速回放+观察响应）：待用户执行

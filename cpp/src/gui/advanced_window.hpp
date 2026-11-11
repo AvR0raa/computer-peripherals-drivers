@@ -20,6 +20,7 @@
 #include "core/diffing.hpp"
 #include "core/fingerprint.hpp"
 #include "core/recorder.hpp"
+#include "core/replay.hpp"
 #include "workers.hpp"
 
 class QComboBox;
@@ -74,6 +75,14 @@ private:
     void on_learn_mark();
     void on_learn_stop();
     void on_learn_commit();
+
+    // ---- 写回放区（M4.5）----
+    void refresh_replay_sources();
+    void refresh_replay_list();
+    void replay_tick();
+    void finalize_replay();
+    void on_replay_start();
+    void on_replay_stop();
 
     // ---- 动作 ----
     void on_read_descriptor();
@@ -131,6 +140,19 @@ private:
     std::vector<pt::GroupDiff> learn_diffs_;
     std::map<QString, pt::Json> learn_label_meta_;
     QTimer* learn_timer_ = nullptr;
+
+    // 写回放区（M4.5）
+    QComboBox* replay_iface_ = nullptr;
+    QListWidget* replay_list_ = nullptr;
+    QComboBox* replay_mode_ = nullptr;
+    QSpinBox* replay_interval_ = nullptr;
+    QSpinBox* replay_window_ = nullptr;
+    QPushButton* replay_start_btn_ = nullptr;
+    QPushButton* replay_stop_btn_ = nullptr;
+    QLabel* replay_status_ = nullptr;
+    std::vector<pt::CaptureEntry> learn_entries_;
+    std::unique_ptr<pt::Replayer> replayer_;
+    QTimer* replay_timer_ = nullptr;
 
     // 日志
     QPlainTextEdit* log_ = nullptr;

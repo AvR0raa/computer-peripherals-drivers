@@ -250,6 +250,10 @@ void AdvancedWindow::closeEvent(QCloseEvent* event) {
         learn_timer_->stop();
         learn_recorder_->stop();
     }
+    if (replayer_) {  // 写回放中关窗：先中止再回收（析构 RAII 兜底，显式 stop 为及时 join）
+        replay_timer_->stop();
+        replayer_->stop();
+    }
     deleteLater();  // 堆分配窗口：关闭即回收（worker 无 parent，不受影响）
     QMainWindow::closeEvent(event);
 }

@@ -473,3 +473,38 @@ DpiOutcome: ok/wrote/old/readback/rolled_back/log
 布局来源：Solaar settings_templates.AdjustableDpi（read_fnid 0x20/write_fnid 0x30/
 write_prefix 0x00）+ produce_dpi_list（ignore=1、0xE000|step 编码）。
 安全范围 50-32000。GUI：罗技设备详情页自动出现 DPI 面板（槽位/滑条/读/写）。
+
+---
+
+# 架构变更记录（M4.5 附加节：rawhid 写回放 —— 本模块 C++ 版新增，Python 版无）
+
+> **架构变更声明**：core 新增第 17 个模块 replay（写回放器），学习模式从"只读"扩展出
+> 受控写路径。这是 M4 内唯一允许写设备的模块；wizard 只生成读/监听型条目的边界不变。
+
+## 22. core/replay（C++：src/core/replay.hpp/cpp；gui：学习页回放区）
+
+```
+struct ReplayAction: mode("output"|"feature"), report_id, data_hex, origin
+struct ReplayEvent:  ts, kind("write"|"response"|"error"|"aborted"|"done"), report_id, data
+action_from_capture(CaptureEntry, origin="") -> ReplayAction | nullopt
+    # input 回声 → output 写（"设备回声即命令"假设）
+    # feature_read → feature 写（配置页快照回写假设）
+    # error / 空数据 / 未知 kind → nullopt（不可回放）
+class Replayer:
+    set_actions(list)                     # start 前设置
+    set_min_interval_ms(ms=100)           # 限速：相邻写最小间隔（默认 10 条/秒，保守）
+    set_response_window_ms(ms=50)         # 每写后读 input 观察响应的窗口
+    start() / stop(timeout=3s) / is_running / aborted
+    events() -> list[ReplayEvent]         # 线程安全快照
+    sent_count / total_actions
+```
+
+- 回放目标：**单接口**（rawhid 通道场景）；报文按 CaptureEntry 原样回放，绝不自动改字节
+- 全程可中止：限速睡眠（5ms 步进）/ 写前后 / 响应窗口读循环均检查 stop 标志
+- 异常即停：写/读异常记 error 条目并终止（设备可能已死），不再产生后续写
+- 安全边界：只回放用户在 GUI 里显式勾选的报文；写命令不进协议库、不入库自动执行
+- GUI：学习页新增回放区（接口下拉 / 勾选报文列表≤200 / 通道映射自动+强制 /
+  限速与响应窗口 spin / 开始-中止），结果汇入学习页输出台
+- C++ 测试：RecordingDev 共享指针观测缓冲（open 后设备归 ReportIO，stop 后假设备
+  析构 —— 断言必须用存活缓冲，勿用裸指针事后读，与 test_report_io 所有权约定一致）
+- 依赖方向：replay → report_io + recorder（CaptureEntry 复用）；GUI 学习页组合两者
