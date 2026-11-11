@@ -1,0 +1,11 @@
+{
+  "brands": {
+    "1EA7": {
+      "name": "Sharkoon",
+      "name_zh": "旋刚"
+    }
+  },
+  "devices": {},
+  "_comment": "品牌文件（一品牌一文件）。$schema=protocol-db/v2；合并加载由 core.fingerprint.load_db 完成。",
+  "$schema": "protocol-db/v2"
+}

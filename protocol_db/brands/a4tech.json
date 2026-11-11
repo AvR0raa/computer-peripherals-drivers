@@ -1,0 +1,15 @@
+{
+  "brands": {
+    "09DA": {
+      "name": "A4Tech",
+      "name_zh": "双飞燕",
+      "official": {
+        "software": "A4Tech 驱动",
+        "url": "http://www.a4tech.com.tw/"
+      }
+    }
+  },
+  "devices": {},
+  "_comment": "品牌文件（一品牌一文件）。$schema=protocol-db/v2；合并加载由 core.fingerprint.load_db 完成。",
+  "$schema": "protocol-db/v2"
+}

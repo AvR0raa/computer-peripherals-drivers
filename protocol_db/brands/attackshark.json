@@ -1,0 +1,30 @@
+{
+  "brands": {
+    "3151": {
+      "name": "attack shark",
+      "name_zh": "前行者",
+      "note": "ROYUAN 方案: usage page 0xFFFF usage 2, 64字节 feature 报文(id=0), 校验和=0xFF-(sum&0xFF), 响应字节0回显opcode。写入有严格限速(过快可致端点假死)且有危险opcode(含flash擦除)——只读探测优先。参考: dnim.dev/blog/royuan-keyboard-protocol",
+      "official": {
+        "software": "GearHub (网页端)",
+        "url": "https://qmk.top/"
+      }
+    },
+    "3554": {
+      "name": "attack shark",
+      "name_zh": "前行者",
+      "note": "ATK 协议同族（EZ2.4G 佐证）"
+    }
+  },
+  "devices": {
+    "3554:1216": {
+      "brand": "attack shark",
+      "product": "attack shark 鼠标",
+      "type": "鼠标",
+      "note": "ATK 协议同族",
+      "source": "EZ2.4G DEVICES 表",
+      "verified": false
+    }
+  },
+  "_comment": "品牌文件（一品牌一文件）。$schema=protocol-db/v2；合并加载由 core.fingerprint.load_db 完成。",
+  "$schema": "protocol-db/v2"
+}

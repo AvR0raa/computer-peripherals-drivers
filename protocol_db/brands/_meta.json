@@ -1,0 +1,15 @@
+{
+  "pending_brands": [
+    {
+      "name": "MAGEGEE",
+      "name_zh": "美嘉獅",
+      "note": "无公开VID，常见为OEM芯片方案(Holtek 04D9/Microdia 0C45等)。插上设备跑 cli.py list 或 GUI 实测 VID:PID 后移入 brands。"
+    },
+    {
+      "name": "Epomaker/VGN/Aula 等",
+      "name_zh": "其他新兴国产品牌",
+      "note": "VID 未经权威来源核实，插机实测后按 usb.ids 或实测证据录入。"
+    }
+  ],
+  "_comment": "M5b 协议库。数据来源：brands VID 为 usb.ids (linux-usb.org USB ID Repository) 公开注册值；devices VID:PID+名称逐条摘自 usb.ids 对应厂商块（本机实测条目除外，标注 hidapi-observed）；note 中的 OpenRazer/HeadsetControl/libratbag/OpenRGB 为社区项目支持线索（协议可移植方向，非已验证）。official 为品牌官方驱动软件入口。verified=true 表示本机真机验证过。不确定的信息宁可不录。"
+}

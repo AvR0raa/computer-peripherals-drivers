@@ -1,0 +1,24 @@
+{
+  "brands": {
+    "041E": {
+      "name": "Creative",
+      "name_zh": "创新",
+      "official": {
+        "software": "Creative App",
+        "url": "https://support.creative.com/"
+      }
+    }
+  },
+  "devices": {
+    "041E:0414": {
+      "brand": "Creative",
+      "product": "HS-720 Headset",
+      "type": "耳机",
+      "note": "",
+      "source": "usb.ids 041E 块",
+      "verified": false
+    }
+  },
+  "_comment": "品牌文件（一品牌一文件）。$schema=protocol-db/v2；合并加载由 core.fingerprint.load_db 完成。",
+  "$schema": "protocol-db/v2"
+}

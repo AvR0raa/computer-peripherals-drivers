@@ -13,7 +13,11 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "protocol_db" / "db.json"
+DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "protocol_db"
+
+# 目录模式加载时的归属索引: ("brands"|"devices", key) -> 品牌文件路径（save_db 写回用）
+_LOAD_MAP: dict[tuple[str, str], Path] = {}
+_LOAD_DIR: Path | None = None
 
 
 class ProtocolDBError(RuntimeError):
@@ -180,7 +184,38 @@ def is_internal_device(db: dict, device) -> bool:
 
 
 def load_db(path: Path = DEFAULT_DB_PATH) -> dict:
-    """读取并校验协议库。结构非法抛 ProtocolDBError。"""
+    """读取并校验协议库。
+
+    path 可以是：
+    - 目录（推荐）：合并 protocol_db/brands/*.json（一品牌一文件）+ _meta.json
+    - 单文件（兼容旧布局/测试临时库）
+    结构非法抛 ProtocolDBError。
+    """
+    global _LOAD_MAP, _LOAD_DIR
+    path = Path(path)
+    if path.is_dir():
+        merged: dict = {"$schema": "protocol-db/v2", "brands": {}, "devices": {}}
+        _LOAD_MAP = {}
+        _LOAD_DIR = path
+        brand_dir = path / "brands"
+        files = sorted(brand_dir.glob("*.json")) if brand_dir.is_dir() else []
+        for file in files:
+            try:
+                data = json.loads(file.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                raise ProtocolDBError(f"协议库文件 {file.name} JSON 语法错误: {exc}") from exc
+            for vid, brand in data.get("brands", {}).items():
+                merged["brands"][vid] = brand
+                _LOAD_MAP[("brands", vid)] = file
+            for vidpid, entry in data.get("devices", {}).items():
+                merged["devices"][vidpid] = entry
+                _LOAD_MAP[("devices", vidpid)] = file
+            if data.get("pending_brands"):
+                merged["pending_brands"] = data["pending_brands"]
+        validate_db(merged)
+        return merged
+
+    # ---- 单文件模式 ----
     if not path.is_file():
         raise ProtocolDBError(f"协议库不存在: {path}")
     try:
@@ -192,14 +227,48 @@ def load_db(path: Path = DEFAULT_DB_PATH) -> dict:
 
 
 def save_db(db: dict, path: Path = DEFAULT_DB_PATH) -> None:
-    """校验后原子写回协议库（tmp + replace，写坏不伤原文件）。"""
+    """校验后写回协议库。
+
+    - 目录模式：按最近一次 load_db 的归属索引把 brands/devices 分发回各品牌文件
+      （新键写入其品牌对应文件；查不到归属时写 _meta.json）
+    - 单文件模式：整库写回该文件
+    均为 tmp + os.replace 原子替换。
+    """
     validate_db(db)
-    path = Path(path)
-    text = json.dumps(db, ensure_ascii=False, indent=2) + "\n"
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(text, encoding="utf-8")
     import os
-    os.replace(tmp, path)
+    path = Path(path)
+
+    def _atomic_write(target: Path, payload: dict):
+        text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, target)
+
+    if path.is_dir() or (_LOAD_DIR is not None and path == DEFAULT_DB_PATH):
+        base = path if path.is_dir() else _LOAD_DIR
+        meta_file = base / "brands" / "_meta.json"
+        buckets: dict[Path, dict] = {}
+        for table in ("brands", "devices"):
+            for key, value in db[table].items():
+                file = _LOAD_MAP.get((table, key), meta_file)
+                buckets.setdefault(file, {"brands": {}, "devices": {}})
+                buckets[file][table][key] = value
+        if "pending_brands" in db:
+            meta = buckets.setdefault(meta_file, {"brands": {}, "devices": {}})
+            meta["pending_brands"] = db["pending_brands"]
+        for file, data in buckets.items():
+            existing = {}
+            if file.exists():
+                try:
+                    existing = json.loads(file.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    existing = {}
+            existing.update({k: v for k, v in data.items() if v})
+            existing["$schema"] = "protocol-db/v2"
+            _atomic_write(file, existing)
+        return
+
+    _atomic_write(path, db)
 
 
 def _brand_info(db: dict, vid_hex: str) -> tuple[str | None, str | None, tuple[str, ...]]:

@@ -1,0 +1,13 @@
+{
+  "brands": {
+    "048D": {
+      "name": "ITE",
+      "name_zh": "笔记本内置控制器",
+      "internal": true,
+      "note": "笔记本 EC/传感器，非外设"
+    }
+  },
+  "devices": {},
+  "_comment": "品牌文件（一品牌一文件）。$schema=protocol-db/v2；合并加载由 core.fingerprint.load_db 完成。",
+  "$schema": "protocol-db/v2"
+}
