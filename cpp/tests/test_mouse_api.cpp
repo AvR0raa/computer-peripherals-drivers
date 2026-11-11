@@ -3,10 +3,12 @@
 
 #include "doctest.h"
 #include "core/mouse_api.hpp"
+#include "fake_backend.hpp"
 #include "hidpp_scripted.hpp"
 #include "test_report_io.hpp"
 
 using namespace pt;
+using pt::test::FakeBackend;
 using pt_test::b;
 using pt_test::Bytes;
 using pt_test::FakeDev;
@@ -104,55 +106,6 @@ TEST_CASE("set_poll_rate 不在支持列表") {
 // ---------------------------------------------------------------------------
 // MouseApi 模板（假后端验证注册/路由机制）
 // ---------------------------------------------------------------------------
-
-class FakeBackend : public MouseBackend {
-public:
-    bool matches(const std::string& vid_hex, const std::vector<DeviceInfo>&) const override {
-        return vid_hex == "ABCD";
-    }
-    void build(const std::vector<DeviceInfo>&) override {}
-    MouseCapabilities capabilities() override {
-        MouseCapabilities caps;
-        caps.dpi_list = {400, 800, 1600};
-        caps.dpi_support = true;
-        caps.poll_rates = {1000, 500};
-        caps.poll_support = true;
-        caps.battery_support = true;
-        return caps;
-    }
-    DpiRead get_dpi() override {
-        DpiRead r;
-        r.x = dpi_;
-        return r;
-    }
-    DpiOutcome set_dpi(int value) override {
-        const int old = dpi_;
-        dpi_ = value;
-        DpiOutcome out;
-        out.ok = true;
-        out.wrote = value;
-        out.readback = value;
-        out.log.push_back("读旧值 " + std::to_string(old));
-        out.log.push_back("写");
-        out.log.push_back("读回 " + std::to_string(value));
-        out.log.push_back("验证: 通过");
-        return out;
-    }
-    std::optional<int> get_poll_rate() override { return 1000; }
-    std::pair<bool, std::string> set_poll_rate(int hz) override {
-        return {true, "已设 " + std::to_string(hz) + "Hz"};
-    }
-    std::optional<BatteryResult> get_battery() override {
-        BatteryResult r;
-        r.vidpid = "ABCD:1234";
-        r.percent = 70;
-        return r;
-    }
-    std::string brand() const override { return "Fake"; }
-
-private:
-    int dpi_ = 800;
-};
 
 // 测试期把注册表换成 FakeBackend（对应 Python monkeypatch BACKENDS）
 struct RegistrySwap {
