@@ -29,6 +29,7 @@ from core.hidpp import (
     read_poll_rate,
     set_poll_rate,
 )
+from core.onboard import read_onboard_info
 from core.dpi import get_dpi_list, read_dpi
 from core.fingerprint import (
     DEFAULT_DB_PATH,
@@ -238,6 +239,12 @@ def cmd_mouse(args) -> int:
         rates = get_poll_rates(link, dev)
         if rate:
             print(f"报告率: {rate}Hz" + (f"（支持 {rates}）" if rates else ""))
+        if args.profile_list:
+            onboard = read_onboard_info(link, dev)
+            print(f"模式: {onboard.mode}  当前档: #{onboard.current_profile}")
+            print(f"配置档数: {onboard.profile_count}  自定义按键: {onboard.buttons}")
+            for h in onboard.headers:
+                print(f"  sector={h.sector} enabled={h.enabled}")
         if args.rate is not None:
             print("")
             print(f"设置报告率 → {args.rate}Hz …")
@@ -245,6 +252,12 @@ def cmd_mouse(args) -> int:
             print("  " + ("✅ " if ok else "❌ ") + msg)
             if not ok:
                 return 1
+        onboard = read_onboard_info(link, dev)
+        if onboard.supported:
+            print(f"板载配置档: 模式={onboard.mode} 当前档#{onboard.current_profile} "
+                  f"共 {onboard.profile_count} 个 / 自定义按键 {onboard.buttons} 个"
+                  + ("　※ 本鼠标不支持主机侧逐键重映射（无 REPROG feature），"
+                     "按键自定义 = 切换配置档（G HUB 编辑内容）" if True else ""))
         b = read_battery(link, dev)
         if b:
             print(f"电量: {b.percent if b.percent is not None else b.display} "
@@ -283,6 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mouse.add_argument("--slot", type=int, default=1, help="接收器槽位 1-7（0=直连 0xFF）")
     p_mouse.add_argument("--set", type=int, default=None, help="设置 DPI 到指定值（可选）")
     p_mouse.add_argument("--rate", type=int, default=None, help="设置报告率 Hz（125/250/500/1000/2000/4000/8000）")
+    p_mouse.add_argument("--profile-list", action="store_true", help="列出板载配置档（按键映射载体）")
     return parser
 
 
