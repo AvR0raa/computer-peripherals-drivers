@@ -216,7 +216,8 @@ def get_poll_rates(link, dev: int, timeout_ms: int = 500) -> list[int]:
     if idx:
         payload = _call_feature(link, dev, idx, 0x10, timeout_ms=timeout_ms)
         if payload is not None and len(payload) >= 2:
-            flags = payload[0] | (payload[1] << 8)
+            # Solaar bytes2int = 大端: payload[0]<<8 | payload[1]（真机实证 00 0F → 125-1000Hz）
+            flags = (payload[0] << 8) | payload[1]
             rates = [POLL_RATE_BY_INDEX[i] for i in range(7) if (flags >> i) & 0x01]
             return sorted(rates, reverse=True)
     idx = get_feature_index(link, dev, FEATURE_REPORT_RATE, timeout_ms)

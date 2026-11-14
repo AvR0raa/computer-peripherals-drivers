@@ -221,8 +221,9 @@ int cmd_mouse(int slot, const std::optional<int>& set_dpi_value,
     const DeviceInfo* short_if = nullptr;
     const DeviceInfo* long_if = nullptr;
     for (const auto& d : ifaces) {
-        if (d.usage == 0x0001) short_if = &d;
-        if (d.usage == 0x0002) long_if = &d;
+        // FF00 页才是 HID++ 通道；仅匹配 usage 会误抓鼠标接口（真机 bug 实证）
+        if (d.usage_page == 0xFF00 && d.usage == 0x0001) short_if = &d;
+        if (d.usage_page == 0xFF00 && d.usage == 0x0002) long_if = &d;
     }
     if (!short_if && !long_if) {
         std::fprintf(stderr, "未找到 C54D 接收器\n");

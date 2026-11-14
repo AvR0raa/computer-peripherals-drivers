@@ -1,3 +1,4 @@
+#include <cstdio>
 // report_io.cpp — 引擎实现（core/report_io.py 平移）。
 #include "report_io.hpp"
 
@@ -235,8 +236,14 @@ void ReportIO::log(const char* direction, const Bytes& data) {
 int ReportIO::write_output(const Bytes& data) {
     open();
     const int written = dev_->write(data);
-    if (written < 0)
-        throw ReportError("write 失败: " + std::to_string(written));
+    if (written < 0) {
+        char rid_buf[8];
+        std::snprintf(rid_buf, sizeof rid_buf, "0x%02X",
+                      data.empty() ? 0 : data.front());
+        throw ReportError(std::string("write 失败: ") + std::to_string(written) +
+                          " path=" + path_ + " size=" +
+                          std::to_string(data.size()) + " rid=" + rid_buf);
+    }
     log("tx", data);
     return written;
 }

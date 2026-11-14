@@ -42,7 +42,7 @@ def test_get_poll_rates_extended(install):
     script = HidppScript()
     install(FakeDev(responses=[
         script.gf(DEV, 0x09),
-        script.call(DEV, 0x09, 0x10, bytes([0x0F, 0x00])),   # bit0-3 → 125/250/500/1000
+        script.call(DEV, 0x09, 0x10, bytes([0x00, 0x0F])),   # bit0-3 → 125/250/500/1000
     ]))
     link = ReportIO(path=b"x")
     assert get_poll_rates(link, DEV) == [1000, 500, 250, 125]
@@ -74,7 +74,7 @@ def test_set_poll_rate_extended_verified(install):
     script = HidppScript()
     install(FakeDev(responses=[
         script.gf(DEV, 0x09),                                  # get_poll_rates
-        script.call(DEV, 0x09, 0x10, bytes([0x0F, 0x00])),
+        script.call(DEV, 0x09, 0x10, bytes([0x00, 0x0F])),
         script.gf(DEV, 0x09),                                  # set 的 get_feature_index
         script.call(DEV, 0x09, 0x30, bytes([0x03])),           # 写 funct 0x30
         script.gf(DEV, 0x09),                                  # 读回
@@ -97,7 +97,7 @@ def test_set_poll_rate_not_in_list(install):
     script = HidppScript()
     install(FakeDev(responses=[
         script.gf(DEV, 0x09),
-        script.call(DEV, 0x09, 0x10, bytes([0x0F, 0x00])),
+        script.call(DEV, 0x09, 0x10, bytes([0x00, 0x0F])),
     ]))
     link = ReportIO(path=b"x")
     ok, msg = set_poll_rate(link, DEV, 8000)

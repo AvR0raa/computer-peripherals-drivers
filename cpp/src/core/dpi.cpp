@@ -155,12 +155,20 @@ DpiOutcome set_dpi(HidppChannel& link, int dev, int new_dpi, int timeout_ms) {
                              ? "（默认 " + std::to_string(*old_read.default_dpi) + "）"
                              : ""));
 
+    // 参数布局（真机实证 PRO X2, 2026-11-14）：0x2202 且 Y/LOD 支持时必须写
+    // 完整三段式 [sensorIdx, X, Y, LOD]——缺 LOD/Y 会被设备静默忽略
+    const bool has_y = det->y;
+    const bool has_lod = det->lod;
     Bytes params = {0x00, static_cast<std::uint8_t>((new_dpi >> 8) & 0xFF),
                     static_cast<std::uint8_t>(new_dpi & 0xFF)};
-    if (name == "0x2202" && det->y && out.old) {
+    if (name == "0x2202" && has_y) {
         // X/Y 双轴设备：Y 轴跟随 X（Solaar 整体写语义的简化）
         params.push_back(static_cast<std::uint8_t>((new_dpi >> 8) & 0xFF));
         params.push_back(static_cast<std::uint8_t>(new_dpi & 0xFF));
+        if (has_lod) {
+            params.push_back(static_cast<std::uint8_t>(
+                old_read.lod.value_or(2)));          // LOD 保持原值
+        }
     }
     const auto payload = call_feature(link, dev, det->idx, write_funct, params, timeout_ms);
     out.wrote = new_dpi;
@@ -185,6 +193,10 @@ DpiOutcome set_dpi(HidppChannel& link, int dev, int new_dpi, int timeout_ms) {
         if (name == "0x2202" && det->y) {
             rollback.push_back(static_cast<std::uint8_t>((old_dpi >> 8) & 0xFF));
             rollback.push_back(static_cast<std::uint8_t>(old_dpi & 0xFF));
+            if (det->lod) {
+                rollback.push_back(static_cast<std::uint8_t>(
+                    old_read.lod.value_or(2)));      // 回滚同样带 LOD
+            }
         }
         call_feature(link, dev, det->idx, write_funct, rollback, timeout_ms);
         const auto confirm = read_dpi(link, dev, timeout_ms);
