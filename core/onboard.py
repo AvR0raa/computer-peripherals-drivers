@@ -24,6 +24,7 @@ from core.hidpp import (
     _call_feature,
     get_feature_index,
     read_onboard_mode,
+    set_onboard_mode,
 )
 
 
@@ -83,3 +84,31 @@ def read_onboard_info(link: HidppLink, dev: int, timeout_ms: int = 600) -> Onboa
                               bytes([s_flag, 0x00, 0x00, (i * 4) & 0xFF]),
                               timeout_ms, long=True)
     return info
+
+
+def set_active_profile(link: HidppLink, dev: int, profile: int,
+                       memory: int = 0x01, timeout_ms: int = 600) -> tuple[bool, str]:
+    """切换活动板载配置档（Solaar OnboardProfiles.write 平移）。
+
+    注意：写 profile = 同时**启用板载模式**（设备改用板载设置）；
+    回 Host 模式用 hidpp.set_onboard_mode(link, dev, "host")。
+    真机格式（PRO X2 实证）：funct 0x40 标识 = [memory, profile_index]，
+    写 = funct 0x10 [0x01] + funct 0x30 [memory, profile]，读回验证。
+    """
+    idx = get_feature_index(link, dev, FEATURE_ONBOARD_PROFILES, timeout_ms)
+    if not idx:
+        return False, "设备不支持板载配置档 feature (0x8100)"
+    enable = _call_feature(link, dev, idx, 0x10, bytes([0x01]), timeout_ms)
+    if enable is None:
+        return False, "启用板载模式无应答"
+    write = _call_feature(link, dev, idx, 0x30,
+                          bytes([memory & 0xFF, profile & 0xFF]), timeout_ms)
+    if write is None:
+        return False, "写配置档无应答"
+    # 读回验证：funct 0x40 前 2 字节应等于 [memory, profile]
+    confirm = _call_feature(link, dev, idx, 0x40, long=True, timeout_ms=timeout_ms)
+    if confirm is None:
+        return False, "读回无应答"
+    if confirm[0] == (memory & 0xFF) and confirm[1] == (profile & 0xFF):
+        return True, f"已切到板载配置档 #{profile}（读回验证通过）"
+    return False, f"验证失败：读回标识 {confirm[0]:02X} {confirm[1]:02X}"

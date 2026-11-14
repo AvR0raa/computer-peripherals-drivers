@@ -245,6 +245,19 @@ def cmd_mouse(args) -> int:
             print(f"配置档数: {onboard.profile_count}  自定义按键: {onboard.buttons}")
             for h in onboard.headers:
                 print(f"  sector={h.sector} enabled={h.enabled}")
+        if args.profile is not None:
+            from core.onboard import set_active_profile
+            ok, msg = set_active_profile(link, dev, args.profile)
+            print(f"切换配置档 #{args.profile}: {'✅ ' + msg if ok else '❌ ' + msg}")
+            if not ok:
+                return 1
+            mode = read_onboard_mode(link, dev)
+            print(f"  当前模式: {mode}"
+                  + ("（板载生效中，--host-mode 可切回）" if mode == "onboard" else ""))
+        if args.host_mode:
+            from core.hidpp import set_onboard_mode as _som
+            ok, msg = _som(link, dev, "host")
+            print(f"切回 Host 模式: {'✅ ' + msg if ok else '❌ ' + msg}")
         if args.rate is not None:
             print("")
             print(f"设置报告率 → {args.rate}Hz …")
@@ -297,6 +310,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_mouse.add_argument("--set", type=int, default=None, help="设置 DPI 到指定值（可选）")
     p_mouse.add_argument("--rate", type=int, default=None, help="设置报告率 Hz（125/250/500/1000/2000/4000/8000）")
     p_mouse.add_argument("--profile-list", action="store_true", help="列出板载配置档（按键映射载体）")
+    p_mouse.add_argument("--profile", type=int, default=None, help="切换到指定板载配置档（按键/DPI/报告率随档切换）")
+    p_mouse.add_argument("--host-mode", action="store_true", help="切回 Host 模式（主机接管 DPI/报告率）")
     return parser
 
 
