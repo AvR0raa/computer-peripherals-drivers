@@ -191,3 +191,40 @@ def test_set_dpi_no_feature(install):
     out = set_dpi(link, DEV, 1600)
     assert not out.ok
     assert "0x2201/0x2202" in out.log[0]
+
+
+def test_set_dpi_extended_writes_full_xyz_lod(install):
+    """回归（真机实证 2026-11-14）：0x2202 Y+LOD 设备必须写三段式 [idx, X, Y, LOD]，
+    缺 LOD 会被 PRO X2 静默忽略（读回不变 → 曾被误判为板载配置档拦截）。"""
+    script = HidppScript()
+    dev = install(FakeDev(responses=[
+        # --- set_dpi._detect: 0x2201 miss → 0x2202 hit → GetInfo ---
+        script.gf(DEV, 0),
+        script.gf(DEV, 0x09),
+        script.call(DEV, 0x09, 1, bytes([0x00, 0x00, 0x03])),   # Y=1 LOD=1
+        # --- read_dpi._detect + funct5 读旧 X=800 Y=800 LOD=2 ---
+        script.gf(DEV, 0),
+        script.gf(DEV, 0x09),
+        script.call(DEV, 0x09, 1, bytes([0x00, 0x00, 0x03])),
+        script.call(DEV, 0x09, 5,
+                    bytes([0x00, 0x03, 0x20, 0x00, 0x03, 0x20, 0x00, 0x00, 0x00, 0x02]),
+                    long=True),
+        # --- funct6 写 X=Y=1600 LOD=2 ---
+        script.call(DEV, 0x09, 6,
+                    bytes([0x00, 0x06, 0x40, 0x06, 0x40, 0x02, 0x00, 0x00]),
+                    long=True),
+        # --- read_dpi._detect + funct5 读回 1600 ---
+        script.gf(DEV, 0),
+        script.gf(DEV, 0x09),
+        script.call(DEV, 0x09, 1, bytes([0x00, 0x00, 0x03])),
+        script.call(DEV, 0x09, 5,
+                    bytes([0x00, 0x06, 0x40, 0x00, 0x06, 0x40, 0x00, 0x00, 0x00, 0x02]),
+                    long=True),
+    ]))
+    link = ReportIO(path=b"x")
+    out = set_dpi(link, DEV, 1600)
+    assert out.ok and out.wrote == 1600 and out.feature == "0x2202"
+    # 找到 funct6 写入线材：必须 6 字节三段式（X=Y=1600，LOD=2 原值保持）
+    set_wires = [w for w in dev.written if len(w) >= 10 and (w[3] >> 4) == 6]
+    assert len(set_wires) == 1
+    assert set_wires[0][4:10] == bytes([0x00, 0x06, 0x40, 0x06, 0x40, 0x02])

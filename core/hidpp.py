@@ -37,6 +37,7 @@ FEATURE_ADJUSTABLE_DPI = 0x2201
 FEATURE_EXTENDED_ADJUSTABLE_DPI = 0x2202
 FEATURE_REPORT_RATE = 0x8060
 FEATURE_EXTENDED_REPORT_RATE = 0x8061
+FEATURE_ONBOARD_PROFILES = 0x8100   # 板载配置档（开启时主机写 DPI/报告率不生效）
 
 # 0x8061 Extended Report Rate: 索引式档位（Solaar ExtendedReportRate choices_universe）
 POLL_RATE_BY_INDEX = {0: 125, 1: 250, 2: 500, 3: 1000, 4: 2000, 5: 4000, 6: 8000}
@@ -241,6 +242,50 @@ def read_poll_rate(link, dev: int, timeout_ms: int = 500) -> int | None:
         if payload is not None and len(payload) >= 1 and payload[0]:
             return 1000 // payload[0]        # 基础版: 字节 = ms
     return None
+
+
+
+# ---------------------------------------------------------------------------
+# 板载配置档（0x8100，Solaar OnboardProfiles 平移）
+# 开启板载档时设备用自己的配置，主机写 DPI/报告率会被静默忽略——
+# 切到 Host 模式（Disabled）后主机写入才生效。
+# ---------------------------------------------------------------------------
+
+def read_onboard_mode(link, dev: int, timeout_ms: int = 500) -> str:
+    """返回 "host" / "onboard" / "unknown"。
+
+    Solaar OnboardProfiles.rw_class.read: funct 2 首字节 0x01=板载启用
+    （此时 funct 4 返回活动档位）；0x00=Host 模式。
+    """
+    idx = get_feature_index(link, dev, FEATURE_ONBOARD_PROFILES, timeout_ms)
+    if not idx:
+        return "unknown"
+    payload = _call_feature(link, dev, idx, 2, timeout_ms=timeout_ms)
+    if payload is None or len(payload) < 1:
+        return "unknown"
+    return "onboard" if payload[0] == 0x01 else "host"
+
+
+def set_onboard_mode(link, dev: int, mode: str, timeout_ms: int = 600) -> tuple[bool, str]:
+    """切换板载模式：mode="host" 关闭板载档（主机接管）；"onboard" 重新开启。
+
+    Solaar write: host → funct 1 param [0x02]；onboard → funct 1 [0x01]。
+    读回验证。
+    """
+    if mode not in ("host", "onboard"):
+        return False, f"未知模式 {mode!r}（host/onboard）"
+    idx = get_feature_index(link, dev, FEATURE_ONBOARD_PROFILES, timeout_ms)
+    if not idx:
+        return False, "设备不支持板载配置档 feature (0x8100)"
+    param = bytes([0x02 if mode == "host" else 0x01])
+    payload = _call_feature(link, dev, idx, 1, param, timeout_ms)
+    if payload is None:
+        return False, "切换无应答"
+    confirm = read_onboard_mode(link, dev, timeout_ms)
+    if confirm == mode:
+        return True, (f"已切到 {mode} 模式"
+                      + ("（主机接管，DPI/报告率写入生效）" if mode == "host" else ""))
+    return False, f"验证失败：读回 {confirm}"
 
 
 def set_poll_rate(link, dev: int, hz: int, timeout_ms: int = 600) -> tuple[bool, str]:

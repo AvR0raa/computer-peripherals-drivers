@@ -166,19 +166,24 @@ def set_dpi(link, dev: int, new_dpi: int, timeout_ms: int = 600) -> DpiOutcome:
     if det is None:
         out.log.append("设备不支持 Adjustable DPI (0x2201/0x2202)")
         return out
-    name, idx, has_y, _lod = det
+    name, idx, has_y, has_lod = det
     out.feature = name
     write_funct = 3 if name == "0x2201" else 6
 
-    old, _dy, _lod, default = read_dpi(link, dev, timeout_ms)
+    old, old_y, old_lod, default = read_dpi(link, dev, timeout_ms)
     out.old = old
     out.log.append(f"读旧值: {old} DPI ({name})" + (f"（默认 {default}）" if default else ""))
 
-    params = bytes([0x00, (new_dpi >> 8) & 0xFF, new_dpi & 0xFF])
-    if name == "0x2202" and has_y and old is not None:
-        # X/Y 双轴设备：Y 轴跟随 X（Solaar 整体写语义的简化）
-        params = params + bytes([(new_dpi >> 8) & 0xFF, new_dpi & 0xFF])
-    payload = _call_feature(link, dev, idx, write_funct, params, timeout_ms)
+    # 参数布局（真机实证 PRO X2，2026-11-14）：
+    #   0x2202 且 Y/LOD 支持时必须写完整三段式 [sensorIdx, X, Y, LOD]，
+    #   缺 LOD/Y 会被设备静默忽略（读回不变 → 安全机制正确回滚）
+    hi, lo = (new_dpi >> 8) & 0xFF, new_dpi & 0xFF
+    params = bytearray([0x00, hi, lo])
+    if name == "0x2202" and has_y:
+        params += bytes([hi, lo])                       # Y 轴跟随 X
+        if has_lod:
+            params += bytes([old_lod if old_lod is not None else 0x02])
+    payload = _call_feature(link, dev, idx, write_funct, bytes(params), timeout_ms)
     out.wrote = new_dpi
     out.log.append(f"写: SetDpi({new_dpi}) → {'ACK' if payload is not None else '无应答'}")
 
@@ -192,10 +197,12 @@ def set_dpi(link, dev: int, new_dpi: int, timeout_ms: int = 600) -> DpiOutcome:
 
     out.log.append(f"验证: 失败（期望 {new_dpi}）——板载配置档开启时主机写入可能不生效")
     if old is not None:
-        rollback = bytes([0x00, (old >> 8) & 0xFF, old & 0xFF])
+        rollback = bytearray([0x00, (old >> 8) & 0xFF, old & 0xFF])
         if name == "0x2202" and has_y:
             rollback += bytes([(old >> 8) & 0xFF, old & 0xFF])
-        _call_feature(link, dev, idx, write_funct, rollback, timeout_ms)
+            if has_lod:
+                rollback += bytes([old_lod if old_lod is not None else 0x02])
+        _call_feature(link, dev, idx, write_funct, bytes(rollback), timeout_ms)
         confirm, _y3, _l3, _d3 = read_dpi(link, dev, timeout_ms)
         out.rolled_back = confirm == old
         out.log.append(f"回滚{'' if out.rolled_back else '失败'}: 读回 {confirm}")
