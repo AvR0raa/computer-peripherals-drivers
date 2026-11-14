@@ -20,6 +20,7 @@ class QScrollArea;
 class AdvancedWindow;
 
 namespace pt::gui {
+class LearningWizard;
 class TrayController;   // tray.hpp（M-C4 托盘常驻）
 }
 
@@ -34,6 +35,7 @@ public:
     void on_battery_all();
     void refresh_devices();
     void open_migration();
+    void open_learning_wizard();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -57,6 +59,7 @@ private:
     pt::gui::HotplugWatcher* watcher_ = nullptr;
     AdvancedWindow* advanced_ = nullptr;
     pt::gui::TrayController* tray_ = nullptr;
+    pt::gui::LearningWizard* wizard_ = nullptr;
     QSettings settings_;
     QGridLayout* grid_ = nullptr;
 };

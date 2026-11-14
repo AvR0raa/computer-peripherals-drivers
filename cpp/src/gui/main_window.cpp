@@ -1,6 +1,7 @@
 // main_window.cpp — 用户客户端主窗口实现（gui.py MainWindow 平移）。
 #include "main_window.hpp"
 
+#include "learning_wizard.hpp"
 #include "migration_dialog.hpp"
 #include "tray.hpp"
 
@@ -284,6 +285,12 @@ void MainWindow::open_dpi(const QString& key) {
                                 : qstr(it->second.front().product);
     DpiDialog dlg(this, key, it->second, product);
     dlg.exec();
+}
+
+void MainWindow::open_learning_wizard() {
+    wizard_ = new pt::gui::LearningWizard(this);
+    wizard_->exec();
+    wizard_ = nullptr;
 }
 
 void MainWindow::open_migration() {
