@@ -320,8 +320,23 @@ void MainWindow::on_battery_all() {
         battery_cache_.clear();
         for (const auto& r : value) battery_cache_[qstr(r.vidpid)] = r;
         std::size_t known = 0;
-        for (const auto& r : value)
-            if (r.percent) ++known;
+        for (const auto& r : value) {
+            const QString key = qstr(r.vidpid);
+            if (r.percent) {
+                ++known;
+                // 低电量提醒（≤20% 跨过阈值提醒一次；回升到 >30% 重置）
+                if (tray_) {
+                    const QString name = qstr(r.product).isEmpty()
+                                             ? key : qstr(r.product);
+                    if (*r.percent <= 20 && !low_alerted_.contains(key)) {
+                        low_alerted_.append(key);
+                        tray_->show_low_battery(name, *r.percent);
+                    } else if (*r.percent > 30) {
+                        low_alerted_.removeAll(key);
+                    }
+                }
+            }
+        }
         statusBar()->showMessage(
             QString("电量扫描完成 — %1/%2 台有读数").arg(known).arg(value.size()));
         rebuild_cards();
@@ -353,6 +368,10 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         settings_.value("close_to_tray", true).toBool()) {
         hide();
         event->ignore();
+        if (!settings_.value("tray_hint_shown", false).toBool()) {
+            tray_->show_running_hint();
+            settings_.setValue("tray_hint_shown", true);
+        }
         return;
     }
     if (watcher_) {

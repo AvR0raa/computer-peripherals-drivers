@@ -13,7 +13,7 @@
 
 namespace pt::gui {
 
-inline const QString APP_VERSION = "v0.9.2-cpp";
+inline const QString APP_VERSION = "v0.9.4-cpp";
 
 QString status_text(DeviceStatus s);   // "OK 已知(可直通)" / ...
 QString status_icon(DeviceStatus s);   // "✅" / "🔌" / "❓"

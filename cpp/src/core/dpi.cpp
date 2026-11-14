@@ -131,7 +131,8 @@ DpiRead read_dpi(HidppChannel& link, int dev, int timeout_ms) {
     return out;
 }
 
-DpiOutcome set_dpi(HidppChannel& link, int dev, int new_dpi, int timeout_ms) {
+DpiOutcome set_dpi(HidppChannel& link, int dev, int new_dpi, int timeout_ms,
+                   std::optional<int> lod_override) {
     DpiOutcome out;
     if (new_dpi < 50 || new_dpi > 32000) {
         out.log.push_back("拒绝: DPI " + std::to_string(new_dpi) + " 超出安全范围 (50-32000)");
@@ -165,10 +166,9 @@ DpiOutcome set_dpi(HidppChannel& link, int dev, int new_dpi, int timeout_ms) {
         // X/Y 双轴设备：Y 轴跟随 X（Solaar 整体写语义的简化）
         params.push_back(static_cast<std::uint8_t>((new_dpi >> 8) & 0xFF));
         params.push_back(static_cast<std::uint8_t>(new_dpi & 0xFF));
-        if (has_lod) {
-            params.push_back(static_cast<std::uint8_t>(
-                old_read.lod.value_or(2)));          // LOD 保持原值
-        }
+        const int lod_byte = lod_override ? *lod_override
+                                          : old_read.lod.value_or(2);
+        params.push_back(static_cast<std::uint8_t>(lod_byte));
     }
     const auto payload = call_feature(link, dev, det->idx, write_funct, params, timeout_ms);
     out.wrote = new_dpi;

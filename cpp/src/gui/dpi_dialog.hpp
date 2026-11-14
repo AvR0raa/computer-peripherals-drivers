@@ -25,6 +25,7 @@ private:
     void read_current();
     void apply_rate();
     void apply();
+    void apply_profile();
 
     std::vector<pt::DeviceInfo> ifaces_;
     QLabel* status_ = nullptr;
@@ -32,4 +33,6 @@ private:
     QSlider* slider_ = nullptr;
     QLabel* info_ = nullptr;
     QComboBox* rate_combo_ = nullptr;
+    QComboBox* lod_combo_ = nullptr;
+    QComboBox* profile_combo_ = nullptr;
 };

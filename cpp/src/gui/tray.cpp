@@ -178,4 +178,17 @@ void TrayController::scan_once() {
     if (window_) window_->on_battery_all();
 }
 
+void TrayController::show_low_battery(const QString& name, int percent) {
+    tray_.showMessage(QString("电量低 — %1").arg(name),
+                      QString("剩 %1%，请尽快充电。").arg(percent),
+                      QSystemTrayIcon::Warning, 4000);
+}
+
+void TrayController::show_running_hint() {
+    tray_.showMessage("外设万能调试器",
+                      QString("程序已最小化到托盘，仍在监控设备电量。\n"
+                              "左键点击图标可重新打开面板。"),
+                      QSystemTrayIcon::Information, 3000);
+}
+
 }  // namespace pt::gui

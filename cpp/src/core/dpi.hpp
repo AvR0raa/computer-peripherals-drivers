@@ -47,6 +47,7 @@ struct DpiRead {
 DpiRead read_dpi(HidppChannel& link, int dev, int timeout_ms = 500);
 
 // 带安全网的 DPI 写入：读旧 → 写 → 读回验证 → 失败回滚。
-DpiOutcome set_dpi(HidppChannel& link, int dev, int new_dpi, int timeout_ms = 600);
+DpiOutcome set_dpi(HidppChannel& link, int dev, int new_dpi, int timeout_ms = 600,
+                   std::optional<int> lod_override = std::nullopt);
 
 }  // namespace pt

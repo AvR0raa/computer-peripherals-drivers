@@ -23,11 +23,17 @@ private:
     void update_icon();
     void scan_once();
 
+public:
+    // 低電量氣泡（同一設備只在跨過閾值時提醒一次）
+    void show_low_battery(const QString& name, int percent);
+    void show_running_hint();       // 首次最小化到托盘的提示
+
     MainWindow* window_;
     QSystemTrayIcon tray_;
     std::unique_ptr<QMenu> menu_;
     QTimer* scan_timer_ = nullptr;      // 周期触发窗口的电量扫描
     QTimer* ui_timer_ = nullptr;        // 周期刷新托盘图标/提示（读缓存，零设备 I/O）
+    QStringList low_alerted_;           // 已提醒过低电量的设备
 };
 
 // 电量环图标（0-100）；无读数给灰色问号环。

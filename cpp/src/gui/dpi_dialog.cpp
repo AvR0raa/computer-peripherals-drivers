@@ -10,6 +10,7 @@
 #include <stdexcept>
 
 #include "core/dpi.hpp"
+#include "core/onboard.hpp"
 #include "gui_helpers.hpp"
 
 using namespace pt;
@@ -31,11 +32,16 @@ std::unique_ptr<HidppLink> build_link_for(const std::vector<DeviceInfo>& ifaces)
 
 // ---- Worker 载荷类型 ----
 
+struct OnboardPayload {
+    pt::OnboardInfo info;
+};
+
 struct DpiReadPayload {
     DpiRead dpi;
     std::vector<int> lst;
     std::optional<int> current_rate;
     std::vector<int> rates;
+    pt::OnboardInfo onboard;
 };
 
 struct TextPayload {
@@ -135,6 +141,7 @@ void DpiDialog::read_current() {
             r->lst = get_dpi_list(*link, slot_no);
             r->current_rate = read_poll_rate(*link, slot_no);
             r->rates = get_poll_rates(*link, slot_no);
+            r->onboard = read_onboard_info(*link, slot_no);
             return r;
         });
     connect(worker, &Worker::done, this, [this](const JobResult& result) {
@@ -159,7 +166,23 @@ void DpiDialog::read_current() {
         rate_combo_->clear();
         if (!r.rates.empty()) {
             for (int hz : r.rates) rate_combo_->addItem(QString("%1 Hz").arg(hz), hz);
-            if (r.current_rate && std::find(r.rates.begin(), r.rates.end(), *r.current_rate)
+            lod_combo_->setCurrentIndex(0);       // 默认保持当前
+        profile_combo_->clear();
+        if (r.onboard.supported()) {
+            profile_combo_->addItem(QString("Host 模式（当前 %1）")
+                                        .arg(QString::fromStdString(r.onboard.mode)),
+                                    -2);
+            profile_combo_->addItem("关闭板载（Host）", -1);
+            int n = 1;
+            for (const auto& h : r.onboard.headers) {
+                profile_combo_->addItem(QString("配置檔 #%1（sector %2）")
+                                            .arg(n++).arg(h.sector),
+                                        h.sector);
+            }
+        } else {
+            profile_combo_->addItem("设备不支持板载配置档", -1);
+        }
+        if (r.current_rate && std::find(r.rates.begin(), r.rates.end(), *r.current_rate)
                                       != r.rates.end())
                 rate_combo_->setCurrentText(QString("%1 Hz").arg(*r.current_rate));
         } else {
@@ -206,6 +229,46 @@ void DpiDialog::apply_rate() {
     worker->start();
 }
 
+void DpiDialog::apply_profile() {
+    const int data = profile_combo_ ? profile_combo_->currentData().toInt() : -1;
+    if (data == -1) {
+        status_->setText("设备不支持板载配置档");
+        return;
+    }
+    const int slot_no = slot();
+    status_->setText("切换配置档中…");
+
+    auto* worker = new Worker(
+        [this, slot_no, data]() -> std::shared_ptr<void> {
+            auto link = build_link_for(ifaces_);
+            if (!link) throw std::runtime_error("未找到 HID++ 接口");
+            link->open();
+            struct LinkCloser {
+                HidppLink& l;
+                ~LinkCloser() { l.close(); }
+            } closer{*link};
+            if (!ensure_online(*link, slot_no, 6))
+                throw std::runtime_error("设备不在线（请动一动鼠标再试）");
+            auto* payload = new std::pair<bool, std::string>(
+                data == -2 ? pt::set_onboard_mode(*link, slot_no, "host")
+                           : pt::set_active_profile(*link, slot_no, data));
+            return std::shared_ptr<void>(payload);
+        });
+
+    connect(worker, &Worker::done, this, [this](const JobResult& result) {
+        if (!result.ok) {
+            status_->setText("出错: " + result.error);
+            return;
+        }
+        const auto& [ok, msg] = *static_cast<std::pair<bool, std::string>*>(
+            result.data.get());
+        status_->setText(QString("%1 %2").arg(ok ? "✅" : "❌",
+                                              QString::fromStdString(msg)));
+    });
+    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+    worker->start();
+}
+
 void DpiDialog::apply() {
     const int slot_no = slot();
     const int target = spin_->value();
@@ -222,7 +285,12 @@ void DpiDialog::apply() {
             } closer{*link};
             if (!ensure_online(*link, slot_no, 6))
                 return make_text("设备不在线（请动一动鼠标再试）");
-            const auto outcome = pt::set_dpi(*link, slot_no, target);
+            std::optional<int> lod = std::nullopt;
+            if (lod_combo_ && lod_combo_->currentData().toInt() >= 0) {
+                lod = lod_combo_->currentData().toInt();
+            }
+            const auto outcome =
+                pt::set_dpi(*link, slot_no, target, 600, lod);
             QStringList lines;
             for (const auto& l : outcome.log) lines << qstr(l);
             return make_text(lines.join("\n"));

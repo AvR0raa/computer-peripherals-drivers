@@ -53,6 +53,7 @@ private:
     pt::Json db_;
     std::map<QString, std::vector<pt::DeviceInfo>> devices_;
     std::map<QString, pt::BatteryResult> battery_cache_;
+    QStringList low_alerted_;
     pt::gui::HotplugWatcher* watcher_ = nullptr;
     AdvancedWindow* advanced_ = nullptr;
     pt::gui::TrayController* tray_ = nullptr;
