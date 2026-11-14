@@ -3,6 +3,9 @@
 
 #include "learning_wizard.hpp"
 #include "migration_dialog.hpp"
+#include <QGraphicsDropShadowEffect>
+#include <QPropertyAnimation>
+
 #include "tray.hpp"
 
 #include <QContextMenuEvent>
@@ -56,10 +59,21 @@ MainWindow::MainWindow() : settings_("AvR0raa", "peripheral-tool") {
     on_battery_all();  // 开机自动读一轮电量
     start_watcher();
     tray_ = new pt::gui::TrayController(this, this);   // 托盘常驻（M-C4 收尾）
+
+    // 现代化: 窗口淡入动画（首次显示）
+    setWindowOpacity(0.0);
+    auto* fade = new QPropertyAnimation(this, "windowOpacity", this);
+    fade->setDuration(280);
+    fade->setStartValue(0.0);
+    fade->setEndValue(1.0);
+    fade->setEasingCurve(QEasingCurve::OutCubic);
+    connect(fade, &QPropertyAnimation::finished, fade, &QObject::deleteLater);
+    fade->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 void MainWindow::build_ui() {
     auto* central = new QWidget();
+    central->setObjectName("central");
     auto* root = new QVBoxLayout(central);
     root->setContentsMargins(24, 20, 24, 16);
     root->setSpacing(14);
@@ -75,16 +89,11 @@ void MainWindow::build_ui() {
     header->addLayout(title_box);
     header->addStretch(1);
 
-    auto* adv_btn = new QPushButton("高级模式");
-    adv_btn->setObjectName("ghostBtn");
-    adv_btn->setToolTip("协议开发：学习模式 / 描述符解析 / 批量探测 / 配置档案");
-    connect(adv_btn, &QPushButton::clicked, this, [this] { open_advanced(); });
     auto* battery_btn = new QPushButton("读取全部电量");
     connect(battery_btn, &QPushButton::clicked, this, [this] { on_battery_all(); });
     auto* refresh_btn = new QPushButton("刷新");
     refresh_btn->setObjectName("ghostBtn");
     connect(refresh_btn, &QPushButton::clicked, this, [this] { refresh_devices(); });
-    header->addWidget(adv_btn);
     header->addWidget(battery_btn);
     header->addWidget(refresh_btn);
     root->addLayout(header);
@@ -267,7 +276,37 @@ QFrame* MainWindow::build_card(const QString& key) {
         v->addLayout(dpi_row);
     }
     v->addStretch(1);
+
+    // 现代化: 卡片投影 + hover 发光（动画过渡）
+    auto* shadow = new QGraphicsDropShadowEffect(card);
+    shadow->setBlurRadius(28);
+    shadow->setOffset(0, 6);
+    shadow->setColor(QColor(0, 0, 0, 110));
+    card->setGraphicsEffect(shadow);
+    card->installEventFilter(this);
     return card;
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (event->type() == QEvent::Enter || event->type() == QEvent::Leave) {
+        if (auto* card = qobject_cast<QFrame*>(watched);
+            card && card->objectName() == "card") {
+            auto* shadow =
+                qobject_cast<QGraphicsDropShadowEffect*>(card->graphicsEffect());
+            if (shadow) {
+                const bool entering = event->type() == QEvent::Enter;
+                auto* anim = new QPropertyAnimation(shadow, "color", card);
+                anim->setDuration(180);
+                anim->setEasingCurve(QEasingCurve::OutCubic);
+                anim->setStartValue(entering ? QColor(0, 0, 0, 110)
+                                             : QColor(79, 140, 255, 130));
+                anim->setEndValue(entering ? QColor(79, 140, 255, 130)
+                                           : QColor(0, 0, 0, 110));
+                anim->start(QAbstractAnimation::DeleteWhenStopped);
+            }
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::show_card_menu(const QString& key, QFrame* card) {
